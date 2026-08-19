@@ -1,0 +1,14 @@
+appId: com.codeagent.desktop
+productName: CodeAgent
+asar: false
+npmRebuild: false
+directories:
+  output: release
+files:
+  - dist/**
+  - resources/generated/**
+  - package.json
+  - node_modules/**
+win:
+  target:
+    - dir

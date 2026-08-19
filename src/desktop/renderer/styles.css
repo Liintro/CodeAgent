@@ -1,0 +1,21 @@
+:root {
+  font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+  color: #202124;
+  background: #f6f7f9;
+  font-synthesis: none;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; }
+button, textarea, input { font: inherit; }
+.workbench { height: 100vh; display: flex; flex-direction: column; }
+.topbar { height: 64px; display: flex; align-items: center; gap: 24px; padding: 0 28px; background: #fff; border-bottom: 1px solid #e5e7eb; }
+.topbar strong { font-size: 19px; }
+.workspace { color: #6b7280; }
+.empty-state { flex: 1; display: grid; place-content: center; text-align: center; }
+.empty-state h1 { margin: 0 0 12px; font-size: 24px; }
+.empty-state p { color: #6b7280; }
+.composer { display: flex; gap: 12px; padding: 20px 28px 28px; background: #fff; border-top: 1px solid #e5e7eb; }
+.composer textarea { flex: 1; min-height: 76px; resize: none; padding: 14px; border: 1px solid #d1d5db; border-radius: 10px; }
+.composer button { align-self: flex-end; padding: 10px 22px; border: 0; border-radius: 8px; color: #fff; background: #2563eb; }
+.composer button:disabled { background: #aab3c2; }

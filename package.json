@@ -1,0 +1,44 @@
+{
+  "name": "codeagent-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "CodeAgent Windows 中文桌面工作台",
+  "type": "module",
+  "main": "dist/desktop/main/index.js",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "build:node": "tsc -p tsconfig.node.json",
+    "build:preload": "tsc -p tsconfig.preload.json",
+    "build:renderer": "vite build",
+    "copy:resources": "node scripts/copy-resources.mjs",
+    "build": "npm run build:node && npm run build:preload && npm run build:renderer && npm run copy:resources",
+    "typecheck": "tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.preload.json --noEmit && tsc -p tsconfig.renderer.json",
+    "test": "node --test --test-concurrency=1 --test-timeout=120000 tests/integration/*.test.mjs",
+    "test:desktop": "node --test --test-concurrency=1 --test-timeout=120000 tests/desktop/*.test.mjs",
+    "test:live": "node --test --test-concurrency=1 --test-timeout=300000 tests/live/*.test.mjs",
+    "pack:win": "npm run build && electron-builder --win --x64 --dir",
+    "test:package": "node --test --test-concurrency=1 --test-timeout=300000 tests/package/*.test.mjs"
+  },
+  "dependencies": {
+    "@earendil-works/pi-agent-core": "1.4.0",
+    "@earendil-works/pi-ai": "1.4.0",
+    "@earendil-works/pi-coding-agent": "1.4.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.1",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.2",
+    "electron": "45.1.0",
+    "electron-builder": "26.18.0",
+    "playwright": "1.64.1",
+    "typescript": "5.9.3",
+    "vite": "8.3.5"
+  }
+}
