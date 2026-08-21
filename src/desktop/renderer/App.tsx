@@ -3,7 +3,11 @@ import type { AppError, KeyChange, ModelInput, SnapshotEnvelope, WorkbenchEvent 
 import { Conversation } from './Conversation';
 import { ModelSettings } from './ModelSettings';
 
-const initial: SnapshotEnvelope = { hostInstanceId: '', seq: 0, value: { host: 'starting', timeline: [] } };
+const initial: SnapshotEnvelope = {
+  hostInstanceId: '',
+  seq: 0,
+  value: { host: 'starting', models: [], timeline: [], conversations: [] },
+};
 const activePhases = ['running', 'awaiting_approval', 'cancelling'];
 
 export default function App() {
@@ -65,7 +69,10 @@ export default function App() {
   async function newConversation() {
     const reply = await window.codeAgent.newConversation();
     if (!reply.ok) setActionError(reply.error);
-    else setActionError(undefined);
+    else {
+      setActionError(undefined);
+      setInput('');
+    }
   }
 
   async function cancel() {
@@ -75,66 +82,103 @@ export default function App() {
   }
 
   return (
-    <main className="workbench">
-      <header className="topbar">
-        <strong className="brand">CodeAgent</strong>
-        <button className="secondary" onClick={chooseProject} disabled={active || view.host !== 'ready'}>打开项目</button>
-        <div className="workspace" title={view.root?.path}>
-          <span>{view.root?.name ?? '未选择项目'}</span>
-          {view.root && <small>{view.root.path}</small>}
-        </div>
-        <button className="secondary settings-button" onClick={() => setSettingsOpen(true)}>模型设置</button>
-      </header>
+    <div className="app-shell">
+      <aside className="sidebar">
+        <div className="sidebar-brand">CodeAgent</div>
+        <button className="new-chat-button" onClick={newConversation} disabled={active || view.host !== 'ready'}>
+          <span>＋</span> 新对话
+        </button>
+        <nav className="conversation-list" aria-label="对话历史">
+          {view.conversations.map(conversation => (
+            <button
+              key={conversation.id}
+              className={`conversation-link ${conversation.id === view.conversationId ? 'current' : ''}`}
+              title={conversation.title}
+              disabled={active}
+              onClick={async () => {
+                const reply = await window.codeAgent.selectConversation(conversation.id);
+                if (!reply.ok) setActionError(reply.error);
+              }}
+            >{conversation.title}</button>
+          ))}
+        </nav>
+        <div className="sidebar-footer">{view.model?.modelId ?? '未配置模型'}</div>
+      </aside>
 
-      {view.host === 'failed' && (
-        <div className="host-error">
-          <span>运行进程已退出</span>
-          <button className="secondary" onClick={async () => {
-            const reply = await window.codeAgent.restartHost();
-            if (!reply.ok) setActionError(reply.error);
-          }}>重启运行进程</button>
-        </div>
-      )}
-
-      <Conversation
-        timeline={view.timeline}
-        approval={view.approval}
-        active={active}
-        onDecide={async (id, decision) => {
-          const reply = await window.codeAgent.decideApproval(id, decision);
-          if (!reply.ok) setActionError(reply.error);
-        }}
-      />
-      <div ref={timelineEnd} />
-
-      {(actionError ?? view.error) && <ErrorView error={(actionError ?? view.error)!} />}
-
-      <footer className="composer-area">
-        <div className="composer">
-          <textarea
-            aria-label="任务输入"
-            value={input}
-            onChange={event => setInput(event.target.value)}
-            onKeyDown={event => {
-              if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
-                event.preventDefault();
-                void send();
-              }
-            }}
-            placeholder="输入任务或问题……"
-            disabled={view.host !== 'ready'}
-          />
-          <div className="composer-actions">
-            <button className="text-button" onClick={newConversation} disabled={active || view.host !== 'ready'}>新对话</button>
-            {active && <button className="danger-button" onClick={cancel}>取消</button>}
-            <button className="primary" onClick={send} disabled={!input.trim() || active || view.host !== 'ready'}>发送</button>
+      <main className="workbench">
+        <header className="topbar">
+          <button className="secondary" onClick={chooseProject} disabled={active || view.host !== 'ready'}>打开项目</button>
+          <div className="workspace" title={view.root?.path}>
+            <span>{view.root?.name ?? '未选择项目'}</span>
+            {view.root && <small>{view.root.path}</small>}
           </div>
-        </div>
-      </footer>
+          {view.models.length > 0 && (
+            <select
+              className="model-select"
+              aria-label="切换模型"
+              value={view.model?.id}
+              disabled={active}
+              onChange={async event => {
+                const reply = await window.codeAgent.selectModel(event.target.value);
+                if (!reply.ok) setActionError(reply.error);
+              }}
+            >
+              {view.models.map(model => <option key={model.id} value={model.id}>{model.modelId}</option>)}
+            </select>
+          )}
+          <button className="secondary settings-button" onClick={() => setSettingsOpen(true)}>模型设置</button>
+        </header>
+
+        {view.host === 'failed' && (
+          <div className="host-error">
+            <span>运行进程已退出</span>
+            <button className="secondary" onClick={async () => {
+              const reply = await window.codeAgent.restartHost();
+              if (!reply.ok) setActionError(reply.error);
+            }}>重启运行进程</button>
+          </div>
+        )}
+
+        <Conversation
+          timeline={view.timeline}
+          approval={view.approval}
+          active={active}
+          onDecide={async (id, decision) => {
+            const reply = await window.codeAgent.decideApproval(id, decision);
+            if (!reply.ok) setActionError(reply.error);
+          }}
+        />
+        <div ref={timelineEnd} />
+
+        {(actionError ?? view.error) && <ErrorView error={(actionError ?? view.error)!} />}
+
+        <footer className="composer-area">
+          <div className="composer">
+            <textarea
+              aria-label="任务输入"
+              value={input}
+              onChange={event => setInput(event.target.value)}
+              onKeyDown={event => {
+                if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+                  event.preventDefault();
+                  void send();
+                }
+              }}
+              placeholder="输入任务或问题……"
+              disabled={view.host !== 'ready'}
+            />
+            <div className="composer-actions">
+              {active && <button className="danger-button" onClick={cancel}>取消</button>}
+              <button className="primary" onClick={send} disabled={!input.trim() || active || view.host !== 'ready'}>发送</button>
+            </div>
+          </div>
+        </footer>
+      </main>
 
       {settingsOpen && (
         <ModelSettings
           model={view.model}
+          models={view.models}
           active={active}
           onClose={() => setSettingsOpen(false)}
           onSave={saveModel}
@@ -142,7 +186,7 @@ export default function App() {
           onCancel={cancel}
         />
       )}
-    </main>
+    </div>
   );
 }
 

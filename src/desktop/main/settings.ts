@@ -1,11 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { safeStorage } from 'electron';
 import type { KeyChange, ModelInput, ModelProfile } from '../../shared/contracts.js';
 
 type StoredModel = ModelInput & { encryptedApiKey?: string };
-type Settings = { model?: StoredModel; lastRootPath?: string };
+type Settings = { models: StoredModel[]; activeModelId?: string; lastRootPath?: string };
 
 export function validateModelInput(value: unknown): ModelInput {
   if (!value || typeof value !== 'object') throw new Error('模型配置无效');
@@ -36,7 +36,7 @@ export function validateModelInput(value: unknown): ModelInput {
 
 export class SettingsStore {
   private readonly file: string;
-  private settings: Settings = {};
+  private settings: Settings = { models: [] };
 
   constructor(userData: string) {
     this.file = join(userData, 'config', 'settings.json');
@@ -45,19 +45,31 @@ export class SettingsStore {
   async load(): Promise<void> {
     try {
       const value = JSON.parse(await readFile(this.file, 'utf8')) as Record<string, unknown>;
+      const storedModels = Array.isArray(value.models) ? value.models : value.model ? [value.model] : [];
+      const models = storedModels.map(item => ({
+        ...validateModelInput(item),
+        encryptedApiKey: typeof (item as Record<string, unknown>).encryptedApiKey === 'string' ? (item as Record<string, unknown>).encryptedApiKey as string : undefined,
+      }));
+      const requestedActive = typeof value.activeModelId === 'string' ? value.activeModelId : undefined;
       this.settings = {
-        model: value.model ? { ...validateModelInput(value.model), encryptedApiKey: typeof (value.model as Record<string, unknown>).encryptedApiKey === 'string' ? (value.model as Record<string, unknown>).encryptedApiKey as string : undefined } : undefined,
+        models,
+        activeModelId: models.some(model => model.id === requestedActive) ? requestedActive : models[0]?.id,
         lastRootPath: typeof value.lastRootPath === 'string' ? value.lastRootPath : undefined,
       };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
-      this.settings = {};
+      this.settings = { models: [] };
       throw new Error('配置文件损坏，请重新保存模型配置', { cause: error });
     }
   }
 
+  get models(): ModelProfile[] {
+    return this.settings.models.map(model => this.publicModel(model));
+  }
+
   get model(): ModelProfile | undefined {
-    return this.settings.model ? { ...this.publicModel(this.settings.model), hasApiKey: Boolean(this.settings.model.encryptedApiKey) } : undefined;
+    const active = this.settings.models.find(model => model.id === this.settings.activeModelId) ?? this.settings.models[0];
+    return active ? this.publicModel(active) : undefined;
   }
 
   get lastRootPath(): string | undefined {
@@ -66,7 +78,8 @@ export class SettingsStore {
 
   async saveModel(value: unknown, keyChange: KeyChange): Promise<ModelProfile> {
     const profile = validateModelInput(value);
-    let encryptedApiKey = this.settings.model?.encryptedApiKey;
+    const previous = this.settings.models.find(model => model.id === profile.id);
+    let encryptedApiKey = previous?.encryptedApiKey;
     if (keyChange.action === 'replace') {
       if (!keyChange.value) throw new Error('API Key 不能为空');
       if (!await safeStorage.isAsyncEncryptionAvailable()) throw new Error('当前系统无法加密保存 API Key');
@@ -75,13 +88,22 @@ export class SettingsStore {
       encryptedApiKey = undefined;
     }
     const model: StoredModel = { ...profile, encryptedApiKey };
-    await this.persist({ ...this.settings, model });
-    this.settings = { ...this.settings, model };
-    return { ...profile, hasApiKey: Boolean(encryptedApiKey) };
+    const models = [...this.settings.models.filter(item => item.id !== profile.id), model];
+    await this.persist({ ...this.settings, models, activeModelId: profile.id });
+    this.settings = { ...this.settings, models, activeModelId: profile.id };
+    return this.publicModel(model);
+  }
+
+  async selectModel(modelId: string): Promise<ModelProfile> {
+    if (!this.settings.models.some(model => model.id === modelId)) throw new Error('模型配置不存在');
+    await this.persist({ ...this.settings, activeModelId: modelId });
+    this.settings = { ...this.settings, activeModelId: modelId };
+    return this.model!;
   }
 
   async decryptApiKey(): Promise<string | undefined> {
-    const encrypted = this.settings.model?.encryptedApiKey;
+    const active = this.settings.models.find(model => model.id === this.settings.activeModelId) ?? this.settings.models[0];
+    const encrypted = active?.encryptedApiKey;
     if (!encrypted) return undefined;
     if (!await safeStorage.isAsyncEncryptionAvailable()) throw new Error('当前系统无法解密 API Key，请重新输入');
     try {
@@ -96,13 +118,13 @@ export class SettingsStore {
     this.settings = { ...this.settings, lastRootPath: path };
   }
 
-  private publicModel(model: StoredModel): ModelInput {
+  private publicModel(model: StoredModel): ModelProfile {
     const { encryptedApiKey: _encrypted, ...profile } = model;
-    return profile;
+    return { ...profile, hasApiKey: Boolean(model.encryptedApiKey) };
   }
 
   private async persist(settings: Settings): Promise<void> {
-    const directory = join(this.file, '..');
+    const directory = dirname(this.file);
     await mkdir(directory, { recursive: true });
     const temporary = join(directory, `settings.${process.pid}.${randomUUID()}.tmp`);
     await writeFile(temporary, JSON.stringify(settings, null, 2), { encoding: 'utf8', flag: 'wx' });

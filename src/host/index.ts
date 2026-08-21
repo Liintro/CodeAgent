@@ -29,7 +29,7 @@ process.parentPort?.on('message', async ({ data }: { data: HostRequest }) => {
       if (!runtime) throw new Error('运行进程尚未初始化');
       switch (command.type) {
         case 'setModel':
-          reply = ok(runtime.setModel(command.profile, command.apiKey));
+          reply = ok(runtime.setModel(command.profile, command.apiKey, command.models));
           break;
         case 'setWorkspace':
           reply = ok(runtime.setWorkspace(await openWorkspace(command.path)));
@@ -51,6 +51,9 @@ process.parentPort?.on('message', async ({ data }: { data: HostRequest }) => {
           break;
         case 'newConversation':
           reply = ok(runtime.newConversation());
+          break;
+        case 'selectConversation':
+          reply = ok(runtime.selectConversation(command.conversationId));
           break;
         case 'getSnapshot':
           reply = ok(runtime.getSnapshot());

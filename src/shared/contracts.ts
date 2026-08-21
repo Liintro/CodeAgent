@@ -35,15 +35,19 @@ export type TimelineItem =
 
 export type InvocationView = { id: string; phase: InvocationPhase; toolErrors: boolean };
 export type ApprovalRequest = { id: string; invocationId: string; toolCallId: string; command: string; cwd: string };
+export type ConversationSummary = { id: string; title: string; updatedAt: number };
 
 export type WorkbenchSnapshot = {
   host: 'starting' | 'ready' | 'failed' | 'stopping' | 'stopped';
   model?: ModelProfile;
+  models: ModelProfile[];
   root?: WorkspaceRoot;
   invocation?: InvocationView;
   timeline: TimelineItem[];
   approval?: ApprovalRequest;
   error?: AppError;
+  conversations: ConversationSummary[];
+  conversationId?: string;
 };
 
 export type Reply<T> = { ok: true; value: T } | { ok: false; error: AppError };
@@ -69,18 +73,20 @@ export interface DesktopBridge {
   getSnapshot(): Promise<Reply<SnapshotEnvelope>>;
   chooseProject(): Promise<Reply<WorkspaceRoot | null>>;
   saveModel(profile: ModelInput, keyChange: KeyChange): Promise<Reply<ModelProfile>>;
+  selectModel(modelId: string): Promise<Reply<ModelProfile>>;
   testModel(): Promise<Reply<{ text: string }>>;
   startMessage(text: string): Promise<Reply<{ invocationId: string }>>;
   cancelInvocation(invocationId: string): Promise<Reply<void>>;
   decideApproval(approvalId: string, decision: 'allow' | 'deny'): Promise<Reply<void>>;
   newConversation(): Promise<Reply<void>>;
+  selectConversation(conversationId: string): Promise<Reply<void>>;
   restartHost(): Promise<Reply<void>>;
   onEvent(listener: (event: WorkbenchEvent) => void): () => void;
 }
 
 export type HostCommand =
   | { type: 'initialize'; hostInstanceId: string; rulesPath: string }
-  | { type: 'setModel'; profile: ModelInput; apiKey?: string }
+  | { type: 'setModel'; profile: ModelInput; apiKey?: string; models: ModelProfile[] }
   | { type: 'setWorkspace'; path: string }
   | { type: 'clearWorkspace' }
   | { type: 'testModel' }
@@ -88,6 +94,7 @@ export type HostCommand =
   | { type: 'cancelInvocation'; invocationId: string }
   | { type: 'decideApproval'; approvalId: string; decision: 'allow' | 'deny' }
   | { type: 'newConversation' }
+  | { type: 'selectConversation'; conversationId: string }
   | { type: 'getSnapshot' }
   | { type: 'shutdown' };
 

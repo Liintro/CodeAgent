@@ -31,9 +31,20 @@ type PendingApproval = {
 };
 
 type ToolItem = Extract<TimelineItem, { kind: 'tool' }>;
+type ConversationState = {
+  id: string;
+  title: string;
+  updatedAt: number;
+  agent?: Agent;
+  unsubscribe?: () => void;
+  timeline: TimelineItem[];
+  invocation?: InvocationView;
+  error?: AppError;
+};
 
 export class AgentRuntime {
   private profile?: ModelInput;
+  private models: ModelProfile[] = [];
   private apiKey?: string;
   private root?: WorkspaceRoot;
   private agent?: Agent;
@@ -44,6 +55,8 @@ export class AgentRuntime {
   private error?: AppError;
   private active?: ActiveRun;
   private assistantId?: string;
+  private conversations: ConversationState[] = [];
+  private conversationId?: string;
   private seq = 0;
 
   constructor(
@@ -56,10 +69,11 @@ export class AgentRuntime {
     return { hostInstanceId: this.hostInstanceId, seq: this.seq, value: this.snapshot() };
   }
 
-  setModel(profile: ModelInput, apiKey?: string): ModelProfile {
+  setModel(profile: ModelInput, apiKey?: string, models?: ModelProfile[]): ModelProfile {
     this.assertIdle();
     this.profile = profile;
     this.apiKey = apiKey;
+    this.models = models ?? [{ ...profile, hasApiKey: Boolean(apiKey) }];
     this.clearConversation();
     this.emitSnapshot();
     return { ...profile, hasApiKey: Boolean(apiKey) };
@@ -83,15 +97,18 @@ export class AgentRuntime {
   startMessage(text: string): { invocationId: string } {
     this.assertConfigured();
     this.assertIdle();
+    this.ensureConversation();
     const id = randomUUID();
     this.error = undefined;
     this.invocation = { id, phase: 'running', toolErrors: false };
     this.active = { id, kind: 'prompt', cancelRequested: false };
     const item: TimelineItem = { kind: 'message', id: randomUUID(), role: 'user', text };
+    if (!this.timeline.length) this.currentConversation()!.title = text.replace(/\s+/g, ' ').slice(0, 32);
     this.timeline.push(item);
     this.emit({ type: 'message.started', id: item.id, role: 'user' });
     this.emit({ type: 'message.ended', id: item.id, text });
     this.emitInvocation();
+    this.emitSnapshot();
     const run = this.runPrompt(id, text);
     this.active.done = run;
     return { invocationId: id };
@@ -133,7 +150,22 @@ export class AgentRuntime {
 
   newConversation(): void {
     this.assertIdle();
-    this.clearConversation();
+    this.syncConversation();
+    this.loadConversation({
+      id: randomUUID(),
+      title: '新对话',
+      updatedAt: Date.now(),
+      timeline: [],
+    });
+    this.emitSnapshot();
+  }
+
+  selectConversation(conversationId: string): void {
+    this.assertIdle();
+    const conversation = this.conversations.find(item => item.id === conversationId);
+    if (!conversation) throw new Error('对话不存在');
+    this.syncConversation();
+    this.loadConversation(conversation);
     this.emitSnapshot();
   }
 
@@ -370,13 +402,47 @@ export class AgentRuntime {
   }
 
   private clearConversation(): void {
-    this.unsubscribe?.();
+    for (const conversation of this.conversations) conversation.unsubscribe?.();
+    this.conversations = [];
+    this.conversationId = undefined;
     this.unsubscribe = undefined;
     this.agent = undefined;
     this.timeline = [];
     this.invocation = undefined;
     this.approval = undefined;
     this.error = undefined;
+    this.assistantId = undefined;
+  }
+
+  private ensureConversation(): void {
+    if (this.currentConversation()) return;
+    this.loadConversation({ id: randomUUID(), title: '新对话', updatedAt: Date.now(), timeline: [] });
+  }
+
+  private currentConversation(): ConversationState | undefined {
+    return this.conversations.find(item => item.id === this.conversationId);
+  }
+
+  private syncConversation(): void {
+    const conversation = this.currentConversation();
+    if (!conversation) return;
+    conversation.agent = this.agent;
+    conversation.unsubscribe = this.unsubscribe;
+    conversation.timeline = this.timeline;
+    conversation.invocation = this.invocation;
+    conversation.error = this.error;
+    conversation.updatedAt = Date.now();
+  }
+
+  private loadConversation(conversation: ConversationState): void {
+    if (!this.conversations.some(item => item.id === conversation.id)) this.conversations.push(conversation);
+    this.conversationId = conversation.id;
+    this.agent = conversation.agent;
+    this.unsubscribe = conversation.unsubscribe;
+    this.timeline = conversation.timeline;
+    this.invocation = conversation.invocation;
+    this.approval = undefined;
+    this.error = conversation.error;
     this.assistantId = undefined;
   }
 
@@ -403,18 +469,25 @@ export class AgentRuntime {
   }
 
   private snapshot(): WorkbenchSnapshot {
+    this.syncConversation();
     return structuredClone({
       host: 'ready',
       model: this.profile ? { ...this.profile, hasApiKey: Boolean(this.apiKey) } : undefined,
+      models: this.models,
       root: this.root,
       invocation: this.invocation,
       timeline: this.timeline,
       approval: this.approval?.request,
       error: this.error,
+      conversations: [...this.conversations]
+        .sort((a, b) => b.updatedAt - a.updatedAt)
+        .map(({ id, title, updatedAt }) => ({ id, title, updatedAt })),
+      conversationId: this.conversationId,
     });
   }
 
   private emit(payload: WorkbenchEvent['payload']): void {
+    this.syncConversation();
     this.send({
       hostInstanceId: this.hostInstanceId,
       seq: ++this.seq,

@@ -27,9 +27,10 @@ let hostInstanceId = '';
 let localSeq = 0;
 let store: SettingsStore;
 let currentModel: ModelProfile | undefined;
+let currentModels: ModelProfile[] = [];
 let currentRoot: WorkspaceRoot | undefined;
 let desktopError: AppError | undefined;
-let lastSnapshot: WorkbenchSnapshot = { host: 'starting', timeline: [] };
+let lastSnapshot: WorkbenchSnapshot = { host: 'starting', models: [], timeline: [], conversations: [] };
 const pending = new Map<string, { resolve: (reply: Reply<unknown>) => void; timer: NodeJS.Timeout }>();
 const expectedExits = new WeakSet<UtilityProcess>();
 
@@ -42,7 +43,11 @@ function log(message: string): void {
 }
 
 function broadcast(event: WorkbenchEvent): void {
+  localSeq = Math.max(localSeq, event.seq);
   if (event.payload.type === 'snapshot') lastSnapshot = event.payload.value;
+  else if (event.payload.type === 'invocation.changed') lastSnapshot = { ...lastSnapshot, invocation: event.payload.value };
+  else if (event.payload.type === 'approval.requested') lastSnapshot = { ...lastSnapshot, approval: event.payload.value };
+  else if (event.payload.type === 'error') lastSnapshot = { ...lastSnapshot, error: event.payload.value };
   mainWindow?.webContents.send('desktop:event', event);
 }
 
@@ -70,7 +75,7 @@ async function startHost(): Promise<Reply<void>> {
   hostReady = false;
   hostInstanceId = randomUUID();
   localSeq = 0;
-  localSnapshot({ host: 'starting', model: currentModel, root: currentRoot, timeline: [] });
+  localSnapshot({ host: 'starting', model: currentModel, models: currentModels, root: currentRoot, timeline: [], conversations: [] });
   const entry = fileURLToPath(new URL('../../host/index.js', import.meta.url));
   if (!existsSync(entry)) return { ok: false, error: { code: 'HOST_ENTRY_MISSING', message: '运行进程入口不存在', detail: entry } };
   log(`host_start entry=${entry} electron=${process.versions.electron} arch=${process.arch}`);
@@ -107,9 +112,11 @@ async function startHost(): Promise<Reply<void>> {
       localSnapshot({
         host: 'failed',
         model: currentModel,
+        models: currentModels,
         root: currentRoot,
         invocation,
         timeline: [],
+        conversations: [],
         error: { code: 'HOST_EXITED', message: '运行进程已退出' },
       });
     }
@@ -120,7 +127,7 @@ async function startHost(): Promise<Reply<void>> {
     rulesPath: fileURLToPath(new URL('../../../resources/generated/AGENTS.md', import.meta.url)),
   });
   if (!initialized.ok) {
-    localSnapshot({ host: 'failed', model: currentModel, root: currentRoot, timeline: [], error: initialized.error });
+    localSnapshot({ host: 'failed', model: currentModel, models: currentModels, root: currentRoot, timeline: [], conversations: [], error: initialized.error });
     return initialized;
   }
   hostReady = true;
@@ -128,9 +135,10 @@ async function startHost(): Promise<Reply<void>> {
   if (store.model) {
     try {
       const apiKey = await store.decryptApiKey();
-      const configured = await hostRequest<ModelProfile>({ type: 'setModel', profile: store.model, apiKey });
+      const configured = await hostRequest<ModelProfile>({ type: 'setModel', profile: store.model, apiKey, models: store.models });
       if (!configured.ok) return configured;
       currentModel = configured.value;
+      currentModels = store.models;
     } catch (error) {
       desktopError = { code: 'KEY_DECRYPT_FAILED', message: error instanceof Error ? error.message : String(error) };
     }
@@ -200,9 +208,22 @@ handle<ModelProfile>('desktop:saveModel', async (profile: unknown, keyChange: Ke
   if (!keyChange || !['keep', 'replace', 'remove'].includes(keyChange.action)) throw new Error('密钥操作无效');
   await assertIdle();
   const model = await store.saveModel(profile, keyChange);
-  const configured = await hostRequest<ModelProfile>({ type: 'setModel', profile: model, apiKey: await store.decryptApiKey() });
+  const configured = await hostRequest<ModelProfile>({ type: 'setModel', profile: model, apiKey: await store.decryptApiKey(), models: store.models });
   if (!configured.ok) return configured;
   currentModel = configured.value;
+  currentModels = store.models;
+  desktopError = undefined;
+  return configured;
+});
+
+handle<ModelProfile>('desktop:selectModel', async (modelId: unknown) => {
+  if (typeof modelId !== 'string') throw new Error('模型标识无效');
+  await assertIdle();
+  const model = await store.selectModel(modelId);
+  const configured = await hostRequest<ModelProfile>({ type: 'setModel', profile: model, apiKey: await store.decryptApiKey(), models: store.models });
+  if (!configured.ok) return configured;
+  currentModel = configured.value;
+  currentModels = store.models;
   desktopError = undefined;
   return configured;
 });
@@ -221,6 +242,10 @@ handle<void>('desktop:decideApproval', async (approvalId: unknown, decision: unk
   return hostRequest<void>({ type: 'decideApproval', approvalId, decision: decision as 'allow' | 'deny' });
 });
 handle<void>('desktop:newConversation', async () => hostRequest<void>({ type: 'newConversation' }));
+handle<void>('desktop:selectConversation', async (conversationId: unknown) => {
+  if (typeof conversationId !== 'string') throw new Error('对话标识无效');
+  return hostRequest<void>({ type: 'selectConversation', conversationId });
+});
 handle<void>('desktop:restartHost', async () => {
   await assertIdle();
   return startHost();
@@ -289,9 +314,11 @@ app.on('before-quit', event => {
 app.whenReady().then(async () => {
   store = new SettingsStore(app.getPath('userData'));
   currentModel = undefined;
+  currentModels = [];
   try {
     await store.load();
     currentModel = store.model;
+    currentModels = store.models;
   } catch (error) {
     desktopError = { code: 'SETTINGS_INVALID', message: error instanceof Error ? error.message : String(error) };
   }
