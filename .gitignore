@@ -1,10 +1,7 @@
 /node_modules/
-/node_modules.pre-ci-backup/
-/dist/
-/release/
+/build/
 /resources/generated/
 /doc/
 /.secrets/
 /.research/
-/CodeAgent_Batch1_*/
 *.log

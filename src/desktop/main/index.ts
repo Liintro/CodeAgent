@@ -124,7 +124,7 @@ async function startHost(): Promise<Reply<void>> {
   const initialized = await hostRequest<{ node: string; execPath: string }>({
     type: 'initialize',
     hostInstanceId,
-    rulesPath: fileURLToPath(new URL('../../../resources/generated/AGENTS.md', import.meta.url)),
+    rulesPath: fileURLToPath(new URL('../../../../resources/generated/AGENTS.md', import.meta.url)),
   });
   if (!initialized.ok) {
     localSnapshot({ host: 'failed', model: currentModel, models: currentModels, root: currentRoot, timeline: [], conversations: [], error: initialized.error });

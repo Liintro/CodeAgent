@@ -3,9 +3,12 @@ productName: CodeAgent
 asar: false
 npmRebuild: false
 directories:
-  output: release
+  output: build/release
+  # electron-builder 默认把 build/ 当作 buildResources 并从 app 中排除，
+  # 与 build/dist 冲突，这里显式移到 build/build-resources。
+  buildResources: build/build-resources
 files:
-  - dist/**
+  - build/dist/**
   - resources/generated/**
   - package.json
   - node_modules/**

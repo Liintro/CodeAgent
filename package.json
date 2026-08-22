@@ -4,7 +4,7 @@
   "private": true,
   "description": "CodeAgent Windows 中文桌面工作台",
   "type": "module",
-  "main": "dist/desktop/main/index.js",
+  "main": "build/dist/desktop/main/index.js",
   "engines": {
     "node": ">=22.19.0"
   },
