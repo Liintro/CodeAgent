@@ -42,6 +42,7 @@ export class SandboxRunner {
         `Set-Content -LiteralPath '${quote(join(root, 'inside.txt'))}' -Value ok`,
         attempt('parent.txt'),
         `& '${quote(shell)}' -NoProfile -NonInteractive -EncodedCommand ${encodedChild}`,
+        'exit 0',
       ].join('; ');
       const result = await this.run(script, root);
       const exists = (path: string) => access(path).then(() => true, () => false);
