@@ -1,6 +1,5 @@
 import type { HostRequest, Reply, WorkbenchEvent } from '../shared/contracts.js';
 import { AgentRuntime } from './runtime/agent-runtime.js';
-import { openWorkspace } from './workspace/workspace.js';
 
 let runtime: AgentRuntime | undefined;
 
@@ -17,7 +16,10 @@ process.parentPort?.on('message', async ({ data }: { data: HostRequest }) => {
   let reply: Reply<unknown>;
   try {
     if (command.type === 'initialize') {
-      runtime = new AgentRuntime(command.hostInstanceId, command.rulesPath, (event: WorkbenchEvent) => send({ event }));
+      runtime = new AgentRuntime(command.hostInstanceId, command.rulesPath, (event: WorkbenchEvent) => send({ event }), {
+        exe: command.sandboxExe,
+        tempDir: command.sandboxTempDir,
+      });
       reply = ok({
         electron: process.versions.electron,
         node: process.versions.node,
@@ -31,11 +33,23 @@ process.parentPort?.on('message', async ({ data }: { data: HostRequest }) => {
         case 'setModel':
           reply = ok(runtime.setModel(command.profile, command.apiKey, command.models));
           break;
-        case 'setWorkspace':
-          reply = ok(runtime.setWorkspace(await openWorkspace(command.path)));
+        case 'newTask':
+          reply = ok(await runtime.newTask(command.rootPaths));
           break;
-        case 'clearWorkspace':
-          reply = ok(runtime.clearWorkspace());
+        case 'selectTask':
+          reply = ok(runtime.selectTask(command.taskId));
+          break;
+        case 'addRoot':
+          reply = ok(await runtime.addRoot(command.path, command.grantSandbox));
+          break;
+        case 'removeRoot':
+          reply = ok(await runtime.removeRoot(command.rootId));
+          break;
+        case 'setPrimaryRoot':
+          reply = ok(runtime.setPrimaryRoot(command.rootId));
+          break;
+        case 'setPermission':
+          reply = ok(await runtime.setPermission(command.userMode));
           break;
         case 'testModel':
           reply = ok(await runtime.testModel());
@@ -43,17 +57,26 @@ process.parentPort?.on('message', async ({ data }: { data: HostRequest }) => {
         case 'startMessage':
           reply = ok(runtime.startMessage(command.text));
           break;
-        case 'cancelInvocation':
-          reply = ok(runtime.cancelInvocation(command.invocationId));
+        case 'implementPlan':
+          reply = ok(await runtime.implementPlan());
+          break;
+        case 'cancelRun':
+          reply = ok(runtime.cancelRun(command.runId));
           break;
         case 'decideApproval':
           reply = ok(runtime.decideApproval(command.approvalId, command.decision));
           break;
-        case 'newConversation':
-          reply = ok(runtime.newConversation());
+        case 'getChanges':
+          reply = ok(await runtime.getChanges());
           break;
-        case 'selectConversation':
-          reply = ok(runtime.selectConversation(command.conversationId));
+        case 'getDiff':
+          reply = ok(await runtime.getDiff(command.rootId, command.path));
+          break;
+        case 'setMcpServers':
+          reply = ok(await runtime.setMcpServers(command.servers));
+          break;
+        case 'getRunEvents':
+          reply = ok(runtime.getRunEvents(command.runId));
           break;
         case 'getSnapshot':
           reply = ok(runtime.getSnapshot());

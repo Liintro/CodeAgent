@@ -1,23 +1,33 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { appendFile, mkdir } from 'node:fs/promises';
+import { appendFile, mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { app, BrowserWindow, dialog, ipcMain, utilityProcess, type UtilityProcess } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, shell, utilityProcess, type UtilityProcess } from 'electron';
 import type {
   AppError,
+  ApprovalDecision,
+  ChangesView,
+  DiffView,
   HostCommand,
   HostRequest,
   HostResponse,
   KeyChange,
   ModelProfile,
+  PermissionSetting,
   Reply,
+  RootView,
   SnapshotEnvelope,
+  UserMode,
   WorkbenchEvent,
   WorkbenchSnapshot,
-  WorkspaceRoot,
 } from '../../shared/contracts.js';
+import { McpConfig } from './mcp-config.js';
 import { SettingsStore } from './settings.js';
+
+const USER_MODES: UserMode[] = ['plan', 'manual', 'accept_edits', 'auto', 'bypass'];
+const DECISIONS: ApprovalDecision[] = ['allow', 'allow_task', 'deny'];
+const BUSY_PHASES = ['running', 'awaiting_approval', 'cancelling'];
 
 let mainWindow: BrowserWindow | undefined;
 let host: UtilityProcess | undefined;
@@ -26,16 +36,23 @@ let closing = false;
 let hostInstanceId = '';
 let localSeq = 0;
 let store: SettingsStore;
+let mcpConfig: McpConfig;
 let currentModel: ModelProfile | undefined;
 let currentModels: ModelProfile[] = [];
-let currentRoot: WorkspaceRoot | undefined;
 let desktopError: AppError | undefined;
-let lastSnapshot: WorkbenchSnapshot = { host: 'starting', models: [], timeline: [], conversations: [] };
+let lastSnapshot: WorkbenchSnapshot = emptySnapshot('starting');
 const pending = new Map<string, { resolve: (reply: Reply<unknown>) => void; timer: NodeJS.Timeout }>();
 const expectedExits = new WeakSet<UtilityProcess>();
 
 if (process.env.CODEAGENT_USER_DATA) app.setPath('userData', process.env.CODEAGENT_USER_DATA);
 if (process.env.CODEAGENT_TEST === '1') app.disableHardwareAcceleration();
+
+function emptySnapshot(hostState: WorkbenchSnapshot['host']): WorkbenchSnapshot {
+  return {
+    host: hostState, models: currentModels, model: currentModel, tasks: [], roots: [], sandboxStatus: 'untested', timeline: [], mcp: [],
+    permission: { userMode: 'manual', phase: 'act', approval: 'ask_writes_and_commands', scope: 'selected_roots', grants: [] },
+  };
+}
 
 function log(message: string): void {
   const file = join(app.getPath('userData'), 'logs', 'desktop.log');
@@ -44,10 +61,14 @@ function log(message: string): void {
 
 function broadcast(event: WorkbenchEvent): void {
   localSeq = Math.max(localSeq, event.seq);
-  if (event.payload.type === 'snapshot') lastSnapshot = event.payload.value;
-  else if (event.payload.type === 'invocation.changed') lastSnapshot = { ...lastSnapshot, invocation: event.payload.value };
-  else if (event.payload.type === 'approval.requested') lastSnapshot = { ...lastSnapshot, approval: event.payload.value };
-  else if (event.payload.type === 'error') lastSnapshot = { ...lastSnapshot, error: event.payload.value };
+  const payload = event.payload;
+  if (payload.type === 'snapshot') lastSnapshot = payload.value;
+  else if (payload.type === 'run.changed') lastSnapshot = { ...lastSnapshot, run: payload.value };
+  else if (payload.type === 'approval.requested') lastSnapshot = { ...lastSnapshot, approval: payload.value };
+  else if (payload.type === 'sandbox.updated') lastSnapshot = { ...lastSnapshot, sandboxStatus: payload.value };
+  else if (payload.type === 'mcp.updated') lastSnapshot = { ...lastSnapshot, mcp: payload.value };
+  else if (payload.type === 'changes.updated') lastSnapshot = { ...lastSnapshot, changes: payload.value };
+  else if (payload.type === 'error') lastSnapshot = { ...lastSnapshot, error: payload.value };
   mainWindow?.webContents.send('desktop:event', event);
 }
 
@@ -75,7 +96,7 @@ async function startHost(): Promise<Reply<void>> {
   hostReady = false;
   hostInstanceId = randomUUID();
   localSeq = 0;
-  localSnapshot({ host: 'starting', model: currentModel, models: currentModels, root: currentRoot, timeline: [], conversations: [] });
+  localSnapshot(emptySnapshot('starting'));
   const entry = fileURLToPath(new URL('../../host/index.js', import.meta.url));
   if (!existsSync(entry)) return { ok: false, error: { code: 'HOST_ENTRY_MISSING', message: '运行进程入口不存在', detail: entry } };
   log(`host_start entry=${entry} electron=${process.versions.electron} arch=${process.arch}`);
@@ -106,28 +127,22 @@ async function startHost(): Promise<Reply<void>> {
     }
     log(`host_exit code=${code}`);
     if (!closing && !expectedExits.has(child)) {
-      const invocation = lastSnapshot.invocation && ['running', 'awaiting_approval', 'cancelling'].includes(lastSnapshot.invocation.phase)
-        ? { ...lastSnapshot.invocation, phase: 'interrupted' as const }
-        : lastSnapshot.invocation;
-      localSnapshot({
-        host: 'failed',
-        model: currentModel,
-        models: currentModels,
-        root: currentRoot,
-        invocation,
-        timeline: [],
-        conversations: [],
-        error: { code: 'HOST_EXITED', message: '运行进程已退出' },
-      });
+      const run = lastSnapshot.run && BUSY_PHASES.includes(lastSnapshot.run.phase)
+        ? { ...lastSnapshot.run, phase: 'interrupted' as const }
+        : lastSnapshot.run;
+      localSnapshot({ ...emptySnapshot('failed'), run, error: { code: 'HOST_EXITED', message: '运行进程已退出' } });
     }
   });
+  const generated = (name: string) => fileURLToPath(new URL(`../../../../resources/generated/${name}`, import.meta.url));
   const initialized = await hostRequest<{ node: string; execPath: string }>({
     type: 'initialize',
     hostInstanceId,
-    rulesPath: fileURLToPath(new URL('../../../../resources/generated/AGENTS.md', import.meta.url)),
+    rulesPath: generated('AGENTS.md'),
+    sandboxExe: generated('codeagent-sandbox.exe'),
+    sandboxTempDir: join(app.getPath('userData'), 'sandbox-temp'),
   });
   if (!initialized.ok) {
-    localSnapshot({ host: 'failed', model: currentModel, models: currentModels, root: currentRoot, timeline: [], conversations: [], error: initialized.error });
+    localSnapshot({ ...emptySnapshot('failed'), error: initialized.error });
     return initialized;
   }
   hostReady = true;
@@ -143,16 +158,19 @@ async function startHost(): Promise<Reply<void>> {
       desktopError = { code: 'KEY_DECRYPT_FAILED', message: error instanceof Error ? error.message : String(error) };
     }
   }
-  if (store.lastRootPath) {
-    const selected = await hostRequest<WorkspaceRoot>({ type: 'setWorkspace', path: store.lastRootPath });
-    if (selected.ok) currentRoot = selected.value;
-    else {
-      currentRoot = undefined;
-      await store.saveLastRoot(undefined);
-      desktopError = { code: 'WORKSPACE_INVALID', message: '最近项目目录不可用，请重新选择', detail: selected.error.message };
-    }
-  }
+  await hostRequest<void>({ type: 'newTask', rootPaths: store.recentRoots });
+  await persistRoots();
+  await loadMcp();
   return { ok: true, value: undefined };
+}
+
+async function loadMcp(): Promise<Reply<void>> {
+  try {
+    return await hostRequest<void>({ type: 'setMcpServers', servers: await mcpConfig.load() });
+  } catch (error) {
+    desktopError = { code: 'MCP_CONFIG_INVALID', message: error instanceof Error ? error.message : String(error) };
+    return { ok: false, error: desktopError };
+  }
 }
 
 async function stopHost(): Promise<void> {
@@ -160,7 +178,7 @@ async function stopHost(): Promise<void> {
   const child = host;
   expectedExits.add(child);
   const exited = new Promise<void>(resolve => child.once('exit', () => resolve()));
-  await hostRequest({ type: 'shutdown' });
+  await hostRequest({ type: 'shutdown' }, 60000);
   await exited;
   if (host === child) host = undefined;
 }
@@ -178,12 +196,33 @@ function handle<T>(channel: string, action: (...args: any[]) => Promise<Reply<T>
   });
 }
 
-async function assertIdle(): Promise<void> {
-  if (!hostReady) return;
-  const snapshot = await hostRequest<SnapshotEnvelope>({ type: 'getSnapshot' });
-  if (snapshot.ok && snapshot.value.value.invocation && ['running', 'awaiting_approval', 'cancelling'].includes(snapshot.value.value.invocation.phase)) {
-    throw new Error('当前执行尚未结束');
-  }
+async function hostSnapshot(): Promise<WorkbenchSnapshot | undefined> {
+  if (!hostReady) return undefined;
+  const reply = await hostRequest<SnapshotEnvelope>({ type: 'getSnapshot' });
+  return reply.ok ? reply.value.value : undefined;
+}
+
+async function assertIdle(): Promise<WorkbenchSnapshot | undefined> {
+  const snapshot = await hostSnapshot();
+  if (snapshot?.run && BUSY_PHASES.includes(snapshot.run.phase)) throw new Error('当前执行尚未结束');
+  return snapshot;
+}
+
+async function confirm(message: string, detail: string, action: string): Promise<boolean> {
+  const result = await dialog.showMessageBox(mainWindow!, { type: 'warning', buttons: [action, '取消'], defaultId: 1, cancelId: 1, message, detail });
+  return result.response === 0;
+}
+
+const confirmBypass = () => confirm('启用绕过权限？', '该模式不再逐项询问：命令以当前 Windows 用户的全部权限直接运行，文件工具也不再限制在所选目录内。', '启用绕过权限');
+const confirmSandboxGrant = (paths: string[]) => confirm(
+  '为沙箱授予目录写入权限？',
+  `Auto 模式需要在以下目录的访问控制列表中添加一条仅供 CodeAgent 沙箱使用的写入权限（退出应用或移除目录时撤销）：\n${paths.join('\n')}`,
+  '授予并启用',
+);
+
+async function persistRoots(): Promise<void> {
+  const snapshot = await hostSnapshot();
+  if (snapshot?.taskId) await store.saveRecentRoots(snapshot.roots.map(root => root.path));
 }
 
 handle<SnapshotEnvelope>('desktop:getSnapshot', async () => {
@@ -193,15 +232,43 @@ handle<SnapshotEnvelope>('desktop:getSnapshot', async () => {
   return reply;
 });
 
-handle<WorkspaceRoot | null>('desktop:chooseProject', async () => {
+handle<RootView | null>('desktop:addRoot', async () => {
+  const snapshot = await assertIdle();
   const result = await dialog.showOpenDialog(mainWindow!, { properties: ['openDirectory'] });
   if (result.canceled || !result.filePaths[0]) return { ok: true, value: null };
-  const selected = await hostRequest<WorkspaceRoot>({ type: 'setWorkspace', path: result.filePaths[0] });
-  if (!selected.ok) return selected;
-  currentRoot = selected.value;
-  desktopError = undefined;
-  await store.saveLastRoot(selected.value.path);
-  return selected;
+  const grantSandbox = snapshot?.permission.userMode === 'auto';
+  if (grantSandbox && !await confirmSandboxGrant([result.filePaths[0]])) return { ok: true, value: null };
+  const added = await hostRequest<RootView>({ type: 'addRoot', path: result.filePaths[0], grantSandbox }, 120000);
+  if (added.ok) {
+    desktopError = undefined;
+    await persistRoots();
+  }
+  return added;
+});
+
+handle<void>('desktop:removeRoot', async (rootId: unknown) => {
+  if (typeof rootId !== 'string') throw new Error('目录标识无效');
+  await assertIdle();
+  const reply = await hostRequest<void>({ type: 'removeRoot', rootId }, 120000);
+  if (reply.ok) await persistRoots();
+  return reply;
+});
+
+handle<void>('desktop:setPrimaryRoot', async (rootId: unknown) => {
+  if (typeof rootId !== 'string') throw new Error('目录标识无效');
+  await assertIdle();
+  const reply = await hostRequest<void>({ type: 'setPrimaryRoot', rootId });
+  if (reply.ok) await persistRoots();
+  return reply;
+});
+
+handle<PermissionSetting | null>('desktop:setPermission', async (userMode: unknown) => {
+  if (!USER_MODES.includes(userMode as UserMode)) throw new Error('权限模式无效');
+  const snapshot = await assertIdle();
+  if (userMode === 'bypass' && !await confirmBypass()) return { ok: true, value: null };
+  const ungranted = snapshot?.roots.filter(root => !root.sandboxGranted).map(root => root.path) ?? [];
+  if (userMode === 'auto' && ungranted.length && !await confirmSandboxGrant(ungranted)) return { ok: true, value: null };
+  return hostRequest<PermissionSetting | null>({ type: 'setPermission', userMode: userMode as UserMode }, 120000);
 });
 
 handle<ModelProfile>('desktop:saveModel', async (profile: unknown, keyChange: KeyChange) => {
@@ -229,22 +296,46 @@ handle<ModelProfile>('desktop:selectModel', async (modelId: unknown) => {
 });
 
 handle<{ text: string }>('desktop:testModel', async () => hostRequest<{ text: string }>({ type: 'testModel' }, 45000));
-handle<{ invocationId: string }>('desktop:startMessage', async (text: unknown) => {
+handle<{ runId: string }>('desktop:startMessage', async (text: unknown) => {
   if (typeof text !== 'string' || !text.trim()) return { ok: false, error: { code: 'INVALID_MESSAGE', message: '请输入内容' } };
-  return hostRequest<{ invocationId: string }>({ type: 'startMessage', text: text.trim() });
+  return hostRequest<{ runId: string }>({ type: 'startMessage', text: text.trim() });
 });
-handle<void>('desktop:cancelInvocation', async (invocationId: unknown) => {
-  if (typeof invocationId !== 'string') throw new Error('执行标识无效');
-  return hostRequest<void>({ type: 'cancelInvocation', invocationId });
+handle<{ runId: string }>('desktop:implementPlan', async () => hostRequest<{ runId: string }>({ type: 'implementPlan' }));
+handle<void>('desktop:cancelRun', async (runId: unknown) => {
+  if (typeof runId !== 'string') throw new Error('执行标识无效');
+  return hostRequest<void>({ type: 'cancelRun', runId });
 });
 handle<void>('desktop:decideApproval', async (approvalId: unknown, decision: unknown) => {
-  if (typeof approvalId !== 'string' || !['allow', 'deny'].includes(decision as string)) throw new Error('审批请求无效');
-  return hostRequest<void>({ type: 'decideApproval', approvalId, decision: decision as 'allow' | 'deny' });
+  if (typeof approvalId !== 'string' || !DECISIONS.includes(decision as ApprovalDecision)) throw new Error('审批请求无效');
+  return hostRequest<void>({ type: 'decideApproval', approvalId, decision: decision as ApprovalDecision });
 });
-handle<void>('desktop:newConversation', async () => hostRequest<void>({ type: 'newConversation' }));
-handle<void>('desktop:selectConversation', async (conversationId: unknown) => {
-  if (typeof conversationId !== 'string') throw new Error('对话标识无效');
-  return hostRequest<void>({ type: 'selectConversation', conversationId });
+handle<void>('desktop:newTask', async () => {
+  await assertIdle();
+  return hostRequest<void>({ type: 'newTask', rootPaths: store.recentRoots });
+});
+handle<void>('desktop:selectTask', async (taskId: unknown) => {
+  if (typeof taskId !== 'string') throw new Error('任务标识无效');
+  return hostRequest<void>({ type: 'selectTask', taskId });
+});
+handle<ChangesView>('desktop:getChanges', async () => hostRequest<ChangesView>({ type: 'getChanges' }, 60000));
+handle<DiffView>('desktop:getDiff', async (rootId: unknown, path: unknown) => {
+  if (typeof rootId !== 'string' || typeof path !== 'string') throw new Error('差异请求无效');
+  return hostRequest<DiffView>({ type: 'getDiff', rootId, path });
+});
+handle<void>('desktop:reloadMcp', async () => {
+  desktopError = undefined;
+  return loadMcp();
+});
+handle<void>('desktop:setMcpEnabled', async (name: unknown, enabled: unknown) => {
+  if (typeof name !== 'string' || typeof enabled !== 'boolean') throw new Error('MCP 设置无效');
+  await mcpConfig.setEnabled(name, enabled);
+  return loadMcp();
+});
+handle<void>('desktop:openMcpConfig', async () => {
+  await mkdir(dirname(mcpConfig.file), { recursive: true });
+  if (!existsSync(mcpConfig.file)) await writeFile(mcpConfig.file, JSON.stringify({ mcpServers: {} }, null, 2), 'utf8');
+  const failure = await shell.openPath(mcpConfig.file);
+  return failure ? { ok: false, error: { code: 'OPEN_FAILED', message: failure } } : { ok: true, value: undefined };
 });
 handle<void>('desktop:restartHost', async () => {
   await assertIdle();
@@ -280,22 +371,19 @@ async function createWindow(): Promise<void> {
 
 async function finishClose(): Promise<void> {
   closing = true;
-  if (hostReady) {
-    const snapshot = await hostRequest<SnapshotEnvelope>({ type: 'getSnapshot' });
-    const active = snapshot.ok && snapshot.value.value.invocation && ['running', 'awaiting_approval', 'cancelling'].includes(snapshot.value.value.invocation.phase);
-    if (active) {
-      const result = await dialog.showMessageBox(mainWindow!, {
-        type: 'question',
-        buttons: ['结束当前执行并退出', '返回'],
-        defaultId: 1,
-        cancelId: 1,
-        message: '当前执行尚未结束',
-        detail: '退出将取消当前执行。',
-      });
-      if (result.response === 1) {
-        closing = false;
-        return;
-      }
+  const snapshot = await hostSnapshot();
+  if (snapshot?.run && BUSY_PHASES.includes(snapshot.run.phase)) {
+    const result = await dialog.showMessageBox(mainWindow!, {
+      type: 'question',
+      buttons: ['结束当前执行并退出', '返回'],
+      defaultId: 1,
+      cancelId: 1,
+      message: '当前执行尚未结束',
+      detail: '退出将取消当前执行。',
+    });
+    if (result.response === 1) {
+      closing = false;
+      return;
     }
   }
   localSnapshot({ ...lastSnapshot, host: 'stopping' });
@@ -313,6 +401,7 @@ app.on('before-quit', event => {
 
 app.whenReady().then(async () => {
   store = new SettingsStore(app.getPath('userData'));
+  mcpConfig = new McpConfig(app.getPath('userData'));
   currentModel = undefined;
   currentModels = [];
   try {
