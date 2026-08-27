@@ -333,7 +333,7 @@ handle<void>('desktop:setMcpEnabled', async (name: unknown, enabled: unknown) =>
 });
 handle<void>('desktop:openMcpConfig', async () => {
   await mkdir(dirname(mcpConfig.file), { recursive: true });
-  if (!existsSync(mcpConfig.file)) await writeFile(mcpConfig.file, JSON.stringify({ mcpServers: {} }, null, 2), 'utf8');
+  if (!existsSync(mcpConfig.file)) await writeFile(mcpConfig.file, JSON.stringify({ '_说明': 'env 与 headers 中的值以明文保存在此文件；值写成 "${env:变量名}" 时改为从桌面进程环境变量读取。', mcpServers: {} }, null, 2), 'utf8');
   const failure = await shell.openPath(mcpConfig.file);
   return failure ? { ok: false, error: { code: 'OPEN_FAILED', message: failure } } : { ok: true, value: undefined };
 });

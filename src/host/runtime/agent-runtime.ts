@@ -439,7 +439,7 @@ export class AgentRuntime {
     }
     if (outcome === 'block') {
       record('deny', 'policy');
-      this.updateTool(task, runId, toolCallId, { state: 'denied' });
+      this.updateTool(task, toolCallId, { state: 'denied' });
       return { block: true, reason: 'Auto 模式只在已验证的沙箱内自动执行命令，当前沙箱不可用或目录未授权，命令未执行。' };
     }
     if (grantKey && task.permission.grants.includes(grantKey)) {
@@ -462,7 +462,7 @@ export class AgentRuntime {
       runner,
     };
     task.run = { ...task.run!, phase: 'awaiting_approval' };
-    this.updateTool(task, runId, toolCallId, { state: 'awaiting_approval' });
+    this.updateTool(task, toolCallId, { state: 'awaiting_approval' });
     this.emitRun(task);
     const pending = this.broker.request(request, signal);
     this.emit({ type: 'approval.requested', value: request });
@@ -473,11 +473,11 @@ export class AgentRuntime {
     this.emitSnapshot();
     record(decision, 'user');
     if (decision === 'cancel') {
-      this.updateTool(task, runId, toolCallId, { state: 'cancelled' });
+      this.updateTool(task, toolCallId, { state: 'cancelled' });
       return { block: true, reason: '用户已取消，操作未执行' };
     }
     if (decision === 'deny') {
-      this.updateTool(task, runId, toolCallId, { state: 'denied' });
+      this.updateTool(task, toolCallId, { state: 'denied' });
       return { block: true, reason: '用户拒绝执行，操作未运行。请说明原因或采用可行替代。' };
     }
     if (decision === 'allow_task' && grantKey && !task.permission.grants.includes(grantKey)) {
@@ -489,7 +489,8 @@ export class AgentRuntime {
   private onAgentEvent(task: TaskState, runId: string, event: AgentEvent): void {
     if (event.type === 'message_end') {
       task.session.appendMessage(event.message as Parameters<SessionManager['appendMessage']>[0]);
-      if (event.message.role === 'assistant' && event.message.usage) {
+      // Provider 没有返回 token 数时不记录。
+      if (event.message.role === 'assistant' && event.message.usage?.totalTokens > 0) {
         this.ledger.appendEvent(runId, 'model.usage', { ...event.message.usage });
       }
     }
@@ -527,7 +528,7 @@ export class AgentRuntime {
         argsText: JSON.stringify(event.args).slice(0, ARGS_TEXT_LIMIT),
       });
     } else if (event.type === 'tool_execution_update') {
-      this.updateTool(task, runId, event.toolCallId, { state: 'running', output: resultText(event.partialResult) });
+      this.updateTool(task, event.toolCallId, { state: 'running', output: resultText(event.partialResult) });
     } else if (event.type === 'tool_execution_end') {
       this.finishTool(task, runId, event.toolCallId, event.result, event.isError);
     }
@@ -543,7 +544,7 @@ export class AgentRuntime {
     const started = this.startedAt.get(toolCallId);
     const durationMs = started ? Date.now() - started : undefined;
     const output = resultText(result);
-    this.updateTool(task, runId, toolCallId, {
+    this.updateTool(task, toolCallId, {
       state, output, exitCode, durationMs,
       error: failed && !denied && !cancelled ? { code: 'TOOL_FAILED', message: '工具执行失败' } : undefined,
     });
@@ -566,7 +567,7 @@ export class AgentRuntime {
   private markToolRunning(task: TaskState, toolCallId: string, root?: RootView): void {
     const runId = task.run!.id;
     this.startedAt.set(toolCallId, Date.now());
-    this.updateTool(task, runId, toolCallId, { state: 'running', runner: this.runners.get(toolCallId) });
+    this.updateTool(task, toolCallId, { state: 'running', runner: this.runners.get(toolCallId) });
     this.ledger.appendEvent(runId, 'tool.started', { toolCallId, rootId: root?.id });
     if (task.run && task.run.phase !== 'cancelling') {
       task.run = { ...task.run, phase: 'running' };
@@ -574,7 +575,7 @@ export class AgentRuntime {
     }
   }
 
-  private updateTool(task: TaskState, _runId: string, toolCallId: string, update: Partial<ToolItem>): void {
+  private updateTool(task: TaskState, toolCallId: string, update: Partial<ToolItem>): void {
     const index = task.timeline.findIndex(item => item.kind === 'tool' && item.toolCallId === toolCallId);
     if (index < 0) return;
     const value = { ...task.timeline[index], ...update } as ToolItem;
