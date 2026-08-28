@@ -181,7 +181,7 @@ export interface DesktopBridge {
 }
 
 export type HostCommand =
-  | { type: 'initialize'; hostInstanceId: string; rulesPath: string; sandboxExe: string; sandboxTempDir: string }
+  | { type: 'initialize'; hostInstanceId: string; rulesPath: string; sandboxExe: string; sandboxTempDir: string; staleGrants: string[] }
   | { type: 'setModel'; profile: ModelInput; apiKey?: string; models: ModelProfile[] }
   | { type: 'newTask'; rootPaths: string[] }
   | { type: 'selectTask'; taskId: string }

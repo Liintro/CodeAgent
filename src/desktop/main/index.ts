@@ -140,12 +140,14 @@ async function startHost(): Promise<Reply<void>> {
     rulesPath: generated('AGENTS.md'),
     sandboxExe: generated('codeagent-sandbox.exe'),
     sandboxTempDir: join(app.getPath('userData'), 'sandbox-temp'),
-  });
+    staleGrants: store.sandboxGrants,
+  }, 120000);
   if (!initialized.ok) {
     localSnapshot({ ...emptySnapshot('failed'), error: initialized.error });
     return initialized;
   }
   hostReady = true;
+  if (store.sandboxGrants.length) await store.saveRoots(store.recentRoots, []);
   log(`host_ready node=${initialized.value.node} execPath=${initialized.value.execPath}`);
   if (store.model) {
     try {
@@ -178,8 +180,9 @@ async function stopHost(): Promise<void> {
   const child = host;
   expectedExits.add(child);
   const exited = new Promise<void>(resolve => child.once('exit', () => resolve()));
-  await hostRequest({ type: 'shutdown' }, 60000);
+  const shutdown = await hostRequest({ type: 'shutdown' }, 60000);
   await exited;
+  if (shutdown.ok && store.sandboxGrants.length) await store.saveRoots(store.recentRoots, []);
   if (host === child) host = undefined;
 }
 
@@ -222,7 +225,10 @@ const confirmSandboxGrant = (paths: string[]) => confirm(
 
 async function persistRoots(): Promise<void> {
   const snapshot = await hostSnapshot();
-  if (snapshot?.taskId) await store.saveRecentRoots(snapshot.roots.map(root => root.path));
+  if (!snapshot?.taskId) return;
+  // 授权路径只增不减，直到 Host 正常退出并撤销；异常退出后下次启动据此清理。
+  const granted = snapshot.roots.filter(root => root.sandboxGranted).map(root => root.path);
+  await store.saveRoots(snapshot.roots.map(root => root.path), [...new Set([...store.sandboxGrants, ...granted])]);
 }
 
 handle<SnapshotEnvelope>('desktop:getSnapshot', async () => {
@@ -268,7 +274,9 @@ handle<PermissionSetting | null>('desktop:setPermission', async (userMode: unkno
   if (userMode === 'bypass' && !await confirmBypass()) return { ok: true, value: null };
   const ungranted = snapshot?.roots.filter(root => !root.sandboxGranted).map(root => root.path) ?? [];
   if (userMode === 'auto' && ungranted.length && !await confirmSandboxGrant(ungranted)) return { ok: true, value: null };
-  return hostRequest<PermissionSetting | null>({ type: 'setPermission', userMode: userMode as UserMode }, 120000);
+  const reply = await hostRequest<PermissionSetting | null>({ type: 'setPermission', userMode: userMode as UserMode }, 120000);
+  await persistRoots();
+  return reply;
 });
 
 handle<ModelProfile>('desktop:saveModel', async (profile: unknown, keyChange: KeyChange) => {

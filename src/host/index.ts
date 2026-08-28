@@ -20,6 +20,7 @@ process.parentPort?.on('message', async ({ data }: { data: HostRequest }) => {
         exe: command.sandboxExe,
         tempDir: command.sandboxTempDir,
       });
+      await runtime.revokeStaleGrants(command.staleGrants);
       reply = ok({
         electron: process.versions.electron,
         node: process.versions.node,

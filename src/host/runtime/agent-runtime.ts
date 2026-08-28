@@ -90,6 +90,11 @@ export class AgentRuntime {
     }
   }
 
+  // 上次异常退出时遗留的授权：新的 Host 不再持有它们，直接撤销。
+  async revokeStaleGrants(paths: string[]): Promise<void> {
+    for (const path of paths) await this.sandbox?.revoke(path).catch(() => undefined);
+  }
+
   getSnapshot(): SnapshotEnvelope {
     return { hostInstanceId: this.hostInstanceId, seq: this.seq, value: this.snapshot() };
   }
