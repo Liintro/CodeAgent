@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { DEFAULT_MAX_BYTES, truncateHead } from '@earendil-works/pi-coding-agent';
-import { McpClient, StdioTransport, StreamableHttpTransport, toLlmContent, type McpTransport } from '@earendil-works/pi-mcp';
+import { McpClient, McpConnectionClosedError, StdioTransport, StreamableHttpTransport, toLlmContent, type McpTransport } from '@earendil-works/pi-mcp';
 import type { McpServerDefinition, McpServerStatus } from '../../shared/contracts.js';
 
 export type McpBinding = { server: string; tool: string; trustedReadOnly: boolean };
@@ -49,8 +49,9 @@ export class McpManager {
     const client = new McpClient({ name: 'codeagent', version: '0.1.0', requestTimeoutMs: definition.timeoutSeconds * 1000 });
     client.onError(() => undefined);
     connection.client = client;
+    const transport = createTransport(definition);
     try {
-      await client.connect(createTransport(definition));
+      await client.connect(transport);
       const remoteTools = await client.listTools();
       if (this.connections.get(definition.name) !== connection) return;
       const used = new Set(this.bindings.keys());
@@ -67,7 +68,7 @@ export class McpManager {
       };
     } catch (error) {
       await client.close().catch(() => undefined);
-      connection.status = { name: definition.name, state: 'failed', toolCount: 0, tools: [], error: error instanceof Error ? error.message : String(error) };
+      connection.status = { name: definition.name, state: 'failed', toolCount: 0, tools: [], error: describeFailure(error, transport, definition) };
     }
     this.onChange(this.statuses());
   }
@@ -78,6 +79,14 @@ function createTransport(definition: McpServerDefinition): McpTransport {
     return new StdioTransport({ command: definition.command, args: definition.args, cwd: definition.cwd, env: definition.env, inheritEnv: true });
   }
   return new StreamableHttpTransport({ url: definition.url!, headers: definition.headers });
+}
+
+// 命令不存在时 pi-mcp 只报“连接已关闭”，原因丢失；改用服务的 stderr 或命令名说明。
+function describeFailure(error: unknown, transport: McpTransport, definition: McpServerDefinition): string {
+  if (error instanceof McpConnectionClosedError && transport instanceof StdioTransport) {
+    return transport.stderr.trim().slice(-500) || `命令无法启动或立即退出：${definition.command}`;
+  }
+  return error instanceof Error ? error.message : String(error);
 }
 
 function toolName(server: string, tool: string, used: Set<string>): string {
