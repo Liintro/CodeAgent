@@ -5,7 +5,7 @@ import { safeStorage } from 'electron';
 import type { KeyChange, ModelInput, ModelProfile } from '../../shared/contracts.js';
 
 type StoredModel = ModelInput & { encryptedApiKey?: string };
-type Settings = { models: StoredModel[]; activeModelId?: string; lastRootPath?: string };
+type Settings = { models: StoredModel[]; activeModelId?: string; recentRoots: string[]; sandboxGrants: string[] };
 
 export function validateModelInput(value: unknown): ModelInput {
   if (!value || typeof value !== 'object') throw new Error('模型配置无效');
@@ -36,7 +36,7 @@ export function validateModelInput(value: unknown): ModelInput {
 
 export class SettingsStore {
   private readonly file: string;
-  private settings: Settings = { models: [] };
+  private settings: Settings = { models: [], recentRoots: [], sandboxGrants: [] };
 
   constructor(userData: string) {
     this.file = join(userData, 'config', 'settings.json');
@@ -54,11 +54,15 @@ export class SettingsStore {
       this.settings = {
         models,
         activeModelId: models.some(model => model.id === requestedActive) ? requestedActive : models[0]?.id,
-        lastRootPath: typeof value.lastRootPath === 'string' ? value.lastRootPath : undefined,
+        // 兼容 Batch 1 的单目录字段。
+        recentRoots: Array.isArray(value.recentRoots)
+          ? value.recentRoots.filter((item): item is string => typeof item === 'string')
+          : typeof value.lastRootPath === 'string' ? [value.lastRootPath] : [],
+        sandboxGrants: Array.isArray(value.sandboxGrants) ? value.sandboxGrants.filter((item): item is string => typeof item === 'string') : [],
       };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
-      this.settings = { models: [] };
+      this.settings = { models: [], recentRoots: [], sandboxGrants: [] };
       throw new Error('配置文件损坏，请重新保存模型配置', { cause: error });
     }
   }
@@ -72,8 +76,8 @@ export class SettingsStore {
     return active ? this.publicModel(active) : undefined;
   }
 
-  get lastRootPath(): string | undefined {
-    return this.settings.lastRootPath;
+  get recentRoots(): string[] {
+    return this.settings.recentRoots;
   }
 
   async saveModel(value: unknown, keyChange: KeyChange): Promise<ModelProfile> {
@@ -113,9 +117,13 @@ export class SettingsStore {
     }
   }
 
-  async saveLastRoot(path?: string): Promise<void> {
-    await this.persist({ ...this.settings, lastRootPath: path });
-    this.settings = { ...this.settings, lastRootPath: path };
+  get sandboxGrants(): string[] {
+    return this.settings.sandboxGrants;
+  }
+
+  async saveRoots(recentRoots: string[], sandboxGrants: string[]): Promise<void> {
+    this.settings = { ...this.settings, recentRoots, sandboxGrants };
+    await this.persist(this.settings);
   }
 
   private publicModel(model: StoredModel): ModelProfile {

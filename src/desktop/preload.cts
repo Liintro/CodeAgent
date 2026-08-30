@@ -5,15 +5,24 @@ const invoke = (channel: string, ...args: unknown[]) => ipcRenderer.invoke(chann
 
 const bridge: DesktopBridge = {
   getSnapshot: () => invoke('desktop:getSnapshot'),
-  chooseProject: () => invoke('desktop:chooseProject'),
+  addRoot: () => invoke('desktop:addRoot'),
+  removeRoot: rootId => invoke('desktop:removeRoot', rootId),
+  setPrimaryRoot: rootId => invoke('desktop:setPrimaryRoot', rootId),
+  setPermission: userMode => invoke('desktop:setPermission', userMode),
   saveModel: (profile, keyChange) => invoke('desktop:saveModel', profile, keyChange),
   selectModel: modelId => invoke('desktop:selectModel', modelId),
   testModel: () => invoke('desktop:testModel'),
   startMessage: text => invoke('desktop:startMessage', text),
-  cancelInvocation: invocationId => invoke('desktop:cancelInvocation', invocationId),
+  implementPlan: () => invoke('desktop:implementPlan'),
+  cancelRun: runId => invoke('desktop:cancelRun', runId),
   decideApproval: (approvalId, decision) => invoke('desktop:decideApproval', approvalId, decision),
-  newConversation: () => invoke('desktop:newConversation'),
-  selectConversation: conversationId => invoke('desktop:selectConversation', conversationId),
+  newTask: () => invoke('desktop:newTask'),
+  selectTask: taskId => invoke('desktop:selectTask', taskId),
+  getChanges: () => invoke('desktop:getChanges'),
+  getDiff: (rootId, path) => invoke('desktop:getDiff', rootId, path),
+  reloadMcp: () => invoke('desktop:reloadMcp'),
+  setMcpEnabled: (name, enabled) => invoke('desktop:setMcpEnabled', name, enabled),
+  openMcpConfig: () => invoke('desktop:openMcpConfig'),
   restartHost: () => invoke('desktop:restartHost'),
   onEvent: listener => {
     const subscription = (_event: Electron.IpcRendererEvent, value: WorkbenchEvent) => listener(value);
