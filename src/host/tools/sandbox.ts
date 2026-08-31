@@ -116,11 +116,11 @@ export class SandboxRunner {
     const shellArgs = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', command];
     const cmdline = [findPowerShell(), ...shellArgs].map(quoteArg).join(' ');
     const restricting = RESTRICTING_SIDS.flatMap(sid => ['--extra-restrict', sid]);
-    // PowerShell 在 TEMP 不可写时会静默降级为 ConstrainedLanguage，因此必须指向已授权目录。
+    // PowerShell 在 TEMP 不可写时会静默降级为 ConstrainedLanguage，因此必须指向已授权目录；uv 的缓存同理。
     return spawn(this.exe, ['run', '--cap', this.capSid, ...restricting, '--cwd', cwd, '--cmdline', cmdline], {
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
-      env: { ...env, TEMP: this.tempDir, TMP: this.tempDir },
+      env: { ...env, TEMP: this.tempDir, TMP: this.tempDir, UV_CACHE_DIR: join(this.tempDir, 'uv-cache') },
     });
   }
 }

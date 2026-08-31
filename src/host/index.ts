@@ -19,8 +19,9 @@ process.parentPort?.on('message', async ({ data }: { data: HostRequest }) => {
       runtime = new AgentRuntime(command.hostInstanceId, command.rulesPath, (event: WorkbenchEvent) => send({ event }), {
         exe: command.sandboxExe,
         tempDir: command.sandboxTempDir,
-      });
+      }, command.dataDir);
       await runtime.revokeStaleGrants(command.staleGrants);
+      await runtime.revalidateRoots();
       reply = ok({
         electron: process.versions.electron,
         node: process.versions.node,
@@ -72,6 +73,30 @@ process.parentPort?.on('message', async ({ data }: { data: HostRequest }) => {
           break;
         case 'getDiff':
           reply = ok(await runtime.getDiff(command.rootId, command.path));
+          break;
+        case 'detectAcceptance':
+          reply = ok(runtime.detectAcceptance());
+          break;
+        case 'setAcceptance':
+          reply = ok(runtime.setAcceptance(command.acceptance));
+          break;
+        case 'verifyNow':
+          reply = ok(runtime.verifyNow());
+          break;
+        case 'continueTask':
+          reply = ok(runtime.continueTask());
+          break;
+        case 'getDelivery':
+          reply = ok(await runtime.getDelivery());
+          break;
+        case 'acceptRoot':
+          reply = ok(await runtime.acceptRoot(command.rootId));
+          break;
+        case 'restoreRoot':
+          reply = ok(await runtime.restoreRoot(command.rootId));
+          break;
+        case 'commitRoot':
+          reply = ok(await runtime.commitRoot(command.rootId, command.message, command.confirmShared));
           break;
         case 'setMcpServers':
           reply = ok(await runtime.setMcpServers(command.servers));

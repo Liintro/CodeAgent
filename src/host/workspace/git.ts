@@ -97,3 +97,41 @@ export async function readOnly(rootPath: string, op: GitReadOp, rev?: string, pa
   };
   return git(rootPath, [...args[op], ...(path ? ['--', path] : [])]);
 }
+
+// ---- 交付：补丁、还原、路径限定提交 ----
+
+export async function patch(rootPath: string, baseTree: string, nowTree: string): Promise<string> {
+  return git(rootPath, ['diff', '--find-renames', '--relative', '--binary', baseTree, nowTree]);
+}
+
+// 不做重命名检测：还原需要精确的新增、修改、删除路径。
+export async function changedPaths(rootPath: string, baseTree: string, nowTree: string): Promise<{ path: string; status: 'A' | 'M' | 'D' }[]> {
+  const tokens = (await git(rootPath, ['diff', '--no-renames', '--relative', '--name-status', '-z', baseTree, nowTree])).split('\0');
+  const result: { path: string; status: 'A' | 'M' | 'D' }[] = [];
+  for (let index = 0; index + 1 < tokens.length; index += 2) {
+    if (tokens[index]) result.push({ path: tokens[index + 1], status: tokens[index][0] === 'A' || tokens[index][0] === 'D' ? tokens[index][0] as 'A' | 'D' : 'M' });
+  }
+  return result;
+}
+
+// 某个树对象中该路径的内容标识；不存在返回 undefined。
+export async function blobAt(rootPath: string, tree: string, path: string): Promise<string | undefined> {
+  return git(rootPath, ['rev-parse', '--verify', '-q', `${tree}:./${path}`]).then(value => value.trim() || undefined, () => undefined);
+}
+
+export async function restoreFrom(rootPath: string, tree: string, paths: string[]): Promise<void> {
+  if (paths.length) await git(rootPath, ['restore', `--source=${tree}`, '--worktree', '--', ...paths]);
+}
+
+// 基线时用户已有的未提交修改所涉及的路径。
+export async function dirtyPaths(rootPath: string, baseCommit: string | undefined, baseTree: string): Promise<string[]> {
+  const base = baseCommit ?? '4b825dc642cb6eb9a060e54bf8d69288fbf2594e';
+  return (await git(rootPath, ['diff', '--no-renames', '--relative', '--name-only', '-z', base, baseTree])).split('\0').filter(Boolean);
+}
+
+// 只提交给定路径：新文件先用 add -N 登记意图，再 commit --only；用户索引中其他已暂存内容保持不变。
+export async function commitPaths(rootPath: string, message: string, tracked: string[], created: string[]): Promise<string> {
+  if (created.length) await git(rootPath, ['add', '-N', '--', ...created]);
+  await git(rootPath, ['commit', '--only', '-m', message, '--', ...tracked, ...created]);
+  return (await git(rootPath, ['rev-parse', 'HEAD'])).trim();
+}

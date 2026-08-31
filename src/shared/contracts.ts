@@ -1,5 +1,5 @@
 export type RunPhase =
-  | 'running' | 'awaiting_approval' | 'cancelling'
+  | 'running' | 'awaiting_approval' | 'verifying' | 'cancelling'
   | 'finished' | 'failed' | 'cancelled' | 'interrupted';
 
 export type UserMode = 'plan' | 'manual' | 'accept_edits' | 'auto' | 'bypass';
@@ -41,12 +41,25 @@ export type RootView = {
   primary: boolean;
   git?: { gitRoot: string; branch?: string; head?: string };
   sandboxGranted: boolean;
+  /** 重启后发现目录已不存在。 */
+  missing?: boolean;
 };
 
-export type TaskSummary = { id: string; title: string; updatedAt: number };
-export type RunView = { id: string; taskId: string; phase: RunPhase; toolErrors: boolean };
+// Task 级交付状态；verified 仅在每个被修改的目录都有当前有效的通过证据时出现。
+export type Delivery = 'none' | 'unverified' | 'verifying' | 'verified' | 'verification_failed' | 'accepted' | 'restored';
+export type RootDeliveryState = 'none' | 'unverified' | 'verified' | 'verification_failed' | 'accepted' | 'restored' | 'committed';
 
-export type ToolState = 'requested' | 'awaiting_approval' | 'running' | 'succeeded' | 'failed' | 'denied' | 'cancelled';
+export type VerifyCommand = { id: string; rootId: string; label: string; command: string; timeoutSeconds: number };
+export type DetectedCommand = VerifyCommand & { missing?: string };
+export type Acceptance = { commands: VerifyCommand[]; maxRepairs: number };
+export const DEFAULT_MAX_REPAIRS = 3;
+export const FEEDBACK_PREFIX = '[自动验证反馈]';
+export const RECOVERY_PREFIX = '[任务恢复说明]';
+
+export type TaskSummary = { id: string; title: string; updatedAt: number; delivery: Delivery; interrupted: boolean };
+export type RunView = { id: string; taskId: string; phase: RunPhase; toolErrors: boolean; attempt?: number };
+
+export type ToolState = 'requested' | 'awaiting_approval' | 'running' | 'succeeded' | 'failed' | 'denied' | 'cancelled' | 'unknown';
 export type ToolItem = {
   kind: 'tool';
   toolCallId: string;
@@ -63,8 +76,24 @@ export type ToolItem = {
   error?: AppError;
   source?: { mcpServer: string; tool: string };
 };
+export type VerificationState = 'running' | 'passed' | 'failed' | 'timeout' | 'cancelled' | 'unavailable';
+export type VerificationItem = {
+  kind: 'verification';
+  id: string;
+  attempt: number;
+  rootAlias: string;
+  commandLabel: string;
+  command: string;
+  state: VerificationState;
+  exitCode?: number;
+  durationMs?: number;
+  outputTail: string;
+  logFile?: string;
+};
 export type TimelineItem =
-  | { kind: 'message'; id: string; role: 'user' | 'assistant'; text: string }
+  | { kind: 'message'; id: string; role: 'user' | 'assistant'; text: string; harness?: boolean }
+  | { kind: 'notice'; id: string; text: string }
+  | VerificationItem
   | ToolItem;
 
 export type ApprovalRequest = {
@@ -112,9 +141,48 @@ export type RootChanges =
 export type ChangesView = { taskId: string; computedAt: number; roots: RootChanges[] };
 export type DiffView = { rootId: string; path: string; patch: string; truncated: boolean };
 
+export type VerificationResult = {
+  commandId: string;
+  rootId: string;
+  label: string;
+  command: string;
+  attempt: number;
+  status: Exclude<VerificationState, 'running'>;
+  exitCode?: number;
+  durationMs: number;
+  logFile?: string;
+  outputTail: string;
+  treeAtStart?: string;
+};
+
+export type RootDelivery = {
+  rootId: string;
+  alias: string;
+  git: boolean;
+  state: RootDeliveryState;
+  branch?: string;
+  baseCommit?: string;
+  baseTree?: string;
+  finalTree?: string;
+  files: FileChange[];
+  /** 基线时该目录已有用户未提交的修改。 */
+  dirtyAtBaseline: boolean;
+  /** 已有修改但没有任何验收命令。 */
+  noCommands: boolean;
+  verification: VerificationResult[];
+  patchFile?: string;
+  reportFile?: string;
+  commitSha?: string;
+  /** 提交会带入用户在这些文件上已有的修改，需要二次确认。 */
+  sharedPaths: string[];
+};
+export type DeliveryView = { taskId: string; state: Delivery; roots: RootDelivery[] };
+export type DeliveryActionResult = { rootId: string; skipped: string[]; commitSha?: string };
+
 export type RunEventType =
   | 'run.started' | 'git.snapshot' | 'tool.requested' | 'permission.decided' | 'tool.started'
-  | 'tool.finished' | 'model.usage' | 'run.ended';
+  | 'tool.finished' | 'model.usage' | 'run.ended'
+  | 'verification.started' | 'verification.finished' | 'repair.requested' | 'compaction.done' | 'delivery.changed';
 export type RunEvent = { runId: string; seq: number; at: number; type: RunEventType; data: Record<string, unknown> };
 
 export type WorkbenchSnapshot = {
@@ -132,6 +200,8 @@ export type WorkbenchSnapshot = {
   error?: AppError;
   mcp: McpServerStatus[];
   changes?: ChangesView;
+  acceptance: Acceptance;
+  delivery?: DeliveryView;
 };
 
 export type Reply<T> = { ok: true; value: T } | { ok: false; error: AppError };
@@ -153,6 +223,8 @@ export type WorkbenchEvent = {
     | { type: 'sandbox.updated'; value: SandboxStatus }
     | { type: 'changes.updated'; value: ChangesView }
     | { type: 'mcp.updated'; value: McpServerStatus[] }
+    | { type: 'verification.updated'; value: VerificationItem }
+    | { type: 'delivery.updated'; value: DeliveryView }
     | { type: 'error'; value: AppError };
 };
 
@@ -173,6 +245,14 @@ export interface DesktopBridge {
   selectTask(taskId: string): Promise<Reply<void>>;
   getChanges(): Promise<Reply<ChangesView>>;
   getDiff(rootId: string, path: string): Promise<Reply<DiffView>>;
+  detectAcceptance(): Promise<Reply<DetectedCommand[]>>;
+  setAcceptance(acceptance: Acceptance): Promise<Reply<void>>;
+  verifyNow(): Promise<Reply<{ runId: string }>>;
+  continueTask(): Promise<Reply<{ runId: string }>>;
+  getDelivery(): Promise<Reply<DeliveryView>>;
+  acceptRoot(rootId: string): Promise<Reply<void>>;
+  restoreRoot(rootId: string): Promise<Reply<DeliveryActionResult | null>>;
+  commitRoot(rootId: string, message: string, confirmShared: boolean): Promise<Reply<DeliveryActionResult>>;
   reloadMcp(): Promise<Reply<void>>;
   setMcpEnabled(name: string, enabled: boolean): Promise<Reply<void>>;
   openMcpConfig(): Promise<Reply<void>>;
@@ -181,7 +261,7 @@ export interface DesktopBridge {
 }
 
 export type HostCommand =
-  | { type: 'initialize'; hostInstanceId: string; rulesPath: string; sandboxExe: string; sandboxTempDir: string; staleGrants: string[] }
+  | { type: 'initialize'; hostInstanceId: string; dataDir: string; rulesPath: string; sandboxExe: string; sandboxTempDir: string; staleGrants: string[] }
   | { type: 'setModel'; profile: ModelInput; apiKey?: string; models: ModelProfile[] }
   | { type: 'newTask'; rootPaths: string[] }
   | { type: 'selectTask'; taskId: string }
@@ -196,6 +276,14 @@ export type HostCommand =
   | { type: 'decideApproval'; approvalId: string; decision: ApprovalDecision }
   | { type: 'getChanges' }
   | { type: 'getDiff'; rootId: string; path: string }
+  | { type: 'detectAcceptance' }
+  | { type: 'setAcceptance'; acceptance: Acceptance }
+  | { type: 'verifyNow' }
+  | { type: 'continueTask' }
+  | { type: 'getDelivery' }
+  | { type: 'acceptRoot'; rootId: string }
+  | { type: 'restoreRoot'; rootId: string }
+  | { type: 'commitRoot'; rootId: string; message: string; confirmShared: boolean }
   | { type: 'setMcpServers'; servers: McpServerDefinition[] }
   | { type: 'getRunEvents'; runId: string }
   | { type: 'getSnapshot' }
