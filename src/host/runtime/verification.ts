@@ -4,7 +4,8 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { delimiter, join } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import type { PowerShellOperations } from '@earendil-works/pi-coding-agent';
-import { FEEDBACK_PREFIX, type DetectedCommand, type RootView, type VerificationResult, type VerifyCommand } from '../../shared/contracts.js';
+import { FEEDBACK_PREFIX } from '../../shared/constants.js';
+import type { DetectedCommand, RootView, VerificationResult, VerifyCommand } from '../../shared/contracts.js';
 
 type Exec = PowerShellOperations['exec'];
 

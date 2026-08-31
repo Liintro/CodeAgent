@@ -7,7 +7,7 @@ import { streamSimple } from '@earendil-works/pi-ai/api/openai-completions';
 import type { Model } from '@earendil-works/pi-ai';
 import { convertToLlm, createLocalPowerShellOperations, SessionManager } from '@earendil-works/pi-coding-agent';
 import {
-  DEFAULT_MAX_REPAIRS,
+
   type Acceptance,
   type AppError,
   type ApprovalDecision,
@@ -39,6 +39,7 @@ import {
   type WorkbenchEvent,
   type WorkbenchSnapshot,
 } from '../../shared/contracts.js';
+import { DEFAULT_MAX_REPAIRS } from '../../shared/constants.js';
 import { McpManager } from '../tools/mcp.js';
 import { createRootTools } from '../tools/native-tools.js';
 import { ApprovalBroker, classify, permissionFor, registered, verdict } from '../tools/permission.js';

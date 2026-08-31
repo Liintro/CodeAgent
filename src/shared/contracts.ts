@@ -52,9 +52,6 @@ export type RootDeliveryState = 'none' | 'unverified' | 'verified' | 'verificati
 export type VerifyCommand = { id: string; rootId: string; label: string; command: string; timeoutSeconds: number };
 export type DetectedCommand = VerifyCommand & { missing?: string };
 export type Acceptance = { commands: VerifyCommand[]; maxRepairs: number };
-export const DEFAULT_MAX_REPAIRS = 3;
-export const FEEDBACK_PREFIX = '[自动验证反馈]';
-export const RECOVERY_PREFIX = '[任务恢复说明]';
 
 export type TaskSummary = { id: string; title: string; updatedAt: number; delivery: Delivery; interrupted: boolean };
 export type RunView = { id: string; taskId: string; phase: RunPhase; toolErrors: boolean; attempt?: number };
