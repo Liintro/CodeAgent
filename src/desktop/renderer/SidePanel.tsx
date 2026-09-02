@@ -157,7 +157,6 @@ function AcceptancePanel({ view, active, call }: { view: WorkbenchSnapshot; acti
   const [commands, setCommands] = useState<VerifyCommand[]>(view.acceptance.commands);
   const [maxRepairs, setMaxRepairs] = useState(view.acceptance.maxRepairs);
   const [suggestions, setSuggestions] = useState<DetectedCommand[]>([]);
-  const [saved, setSaved] = useState(false);
   const taskKey = view.taskId;
   const plan = view.permission.userMode === 'plan';
 
@@ -165,25 +164,20 @@ function AcceptancePanel({ view, active, call }: { view: WorkbenchSnapshot; acti
     setCommands(view.acceptance.commands);
     setMaxRepairs(view.acceptance.maxRepairs);
     setSuggestions([]);
-    setSaved(false);
   }, [taskKey, JSON.stringify(view.acceptance)]);
 
   const update = (id: string, patch: Partial<VerifyCommand>) => {
     setCommands(list => list.map(item => item.id === id ? { ...item, ...patch } : item));
-    setSaved(false);
   };
   const add = (command: VerifyCommand) => {
     setCommands(list => list.some(item => item.id === command.id) ? list : [...list, command]);
-    setSaved(false);
   };
   async function detect() {
     const found = await call(window.codeAgent.detectAcceptance());
     setSuggestions(found ?? []);
   }
-  async function save() {
-    const ok = await call(window.codeAgent.setAcceptance({ commands, maxRepairs }));
-    setSaved(ok !== undefined);
-  }
+  const saved = JSON.stringify({ commands, maxRepairs }) === JSON.stringify(view.acceptance);
+  const save = () => call(window.codeAgent.setAcceptance({ commands, maxRepairs }));
 
   return (
     <div className="panel-body">
@@ -199,7 +193,7 @@ function AcceptancePanel({ view, active, call }: { view: WorkbenchSnapshot; acti
                 <input aria-label="命令名称" className="command-label" value={command.label} onChange={event => update(command.id, { label: event.target.value })} />
                 <input aria-label="验收命令" className="command-text" value={command.command} onChange={event => update(command.id, { command: event.target.value })} />
                 <label className="timeout-field">超时 <input aria-label="超时秒数" type="number" min={1} max={3600} value={command.timeoutSeconds} onChange={event => update(command.id, { timeoutSeconds: Number(event.target.value) })} /> 秒</label>
-                <button className="icon-button" aria-label="删除命令" onClick={() => { setCommands(list => list.filter(item => item.id !== command.id)); setSaved(false); }}>×</button>
+                <button className="icon-button" aria-label="删除命令" onClick={() => setCommands(list => list.filter(item => item.id !== command.id))}>×</button>
               </div>
             ))}
             <button className="text-button" disabled={active} onClick={() => add({ id: crypto.randomUUID(), rootId: root.id, label: '验收命令', command: '', timeoutSeconds: 600 })}>＋ 添加命令</button>
@@ -219,9 +213,9 @@ function AcceptancePanel({ view, active, call }: { view: WorkbenchSnapshot; acti
         </section>
       )}
       <div className="accept-footer">
-        <label className="repair-field">最多修复 <input aria-label="修复次数上限" type="number" min={0} max={10} value={maxRepairs} onChange={event => { setMaxRepairs(Number(event.target.value)); setSaved(false); }} /> 次</label>
+        <label className="repair-field">最多修复 <input aria-label="修复次数上限" type="number" min={0} max={10} value={maxRepairs} onChange={event => setMaxRepairs(Number(event.target.value))} /> 次</label>
         <button className="secondary small" onClick={detect} disabled={active || !view.roots.length}>检测</button>
-        <button className="primary small" onClick={save} disabled={active || commands.some(command => !command.command.trim())}>{saved ? '已保存' : '保存并确认'}</button>
+        <button className="primary small" onClick={save} disabled={active || saved || commands.some(command => !command.command.trim())}>{saved ? '已保存' : '保存并确认'}</button>
       </div>
       <button className="secondary" onClick={() => call(window.codeAgent.verifyNow())} disabled={active || plan || !view.acceptance.commands.length}>立即验证</button>
       {plan && <p className="changes-empty">计划模式不执行验证命令。</p>}

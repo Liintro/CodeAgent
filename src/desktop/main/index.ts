@@ -249,7 +249,7 @@ async function persistRoots(): Promise<void> {
   if (!snapshot?.taskId) return;
   // 授权路径只增不减，直到 Host 正常退出并撤销；异常退出后下次启动据此清理。
   const granted = snapshot.roots.filter(root => root.sandboxGranted).map(root => root.path);
-  await store.saveRoots(snapshot.roots.map(root => root.path), [...new Set([...store.sandboxGrants, ...granted])]);
+  await store.saveRoots(snapshot.roots.filter(root => !root.missing).map(root => root.path), [...new Set([...store.sandboxGrants, ...granted])]);
 }
 
 handle<SnapshotEnvelope>('desktop:getSnapshot', async () => {

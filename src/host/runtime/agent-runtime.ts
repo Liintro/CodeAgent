@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { existsSync, readdirSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -141,6 +142,8 @@ export class AgentRuntime {
       }
     }
     this.emitSnapshot();
+    const current = this.tasks.find(item => item.id === this.taskId);
+    if (current) await this.restoreViews(current);
   }
 
   getSnapshot(): SnapshotEnvelope {
@@ -183,6 +186,7 @@ export class AgentRuntime {
     this.taskId = taskId;
     this.testRun = undefined;
     this.emitSnapshot();
+    void this.restoreViews(task);
   }
 
   async addRoot(path: string, grantSandbox = false): Promise<RootView> {
@@ -996,6 +1000,18 @@ ${this.stateBlock(task)}`,
     return this.sandbox?.status === 'available' && task.roots.length > 0 && task.roots.every(root => root.sandboxGranted);
   }
 
+  // 重启或切换任务后，变更与交付状态要重新按当前真实的 Git 状态计算；失败（例如目录已被删除）时保持原样。
+  private async restoreViews(task: TaskState): Promise<void> {
+    if (task.permission.userMode === 'plan' || task.roots.every(root => root.missing)) return;
+    try {
+      await this.refreshChanges(task);
+      await this.refreshDelivery(task);
+      this.emitSnapshot();
+    } catch {
+      // 保持原有视图
+    }
+  }
+
   // ---- Recovery ----
 
   // 以真实的 Git/工作区状态为准，列出变更与结果未知的调用；不重放任何东西。
@@ -1056,7 +1072,11 @@ ${this.stateBlock(task)}`,
 
   private openSession(task: TaskState): SessionManager {
     const cwd = task.roots[0]?.path ?? process.cwd();
-    return this.dataDir ? SessionManager.continueRecent(cwd, join(this.dataDir, 'sessions', task.id)) : SessionManager.inMemory(cwd);
+    if (!this.dataDir) return SessionManager.inMemory(cwd);
+    // 会话文件名以时间戳开头；目录可能是在添加目录之前创建的，所以不按 cwd 匹配，直接打开最新的文件。
+    const directory = join(this.dataDir, 'sessions', task.id);
+    const latest = existsSync(directory) ? readdirSync(directory).filter(name => name.endsWith('.jsonl')).sort().at(-1) : undefined;
+    return latest ? SessionManager.open(join(directory, latest), directory) : SessionManager.create(cwd, directory);
   }
 
   private save(task: TaskState): void {
