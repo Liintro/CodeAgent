@@ -614,7 +614,7 @@ ${this.stateBlock(task)}`,
     return (currentModel, context, options) => streamSimple(currentModel as Model<'openai-completions'>, context, {
       ...options,
       apiKey: this.apiKey,
-      maxTokens: profile.maxOutputTokens,
+      maxTokens: options?.maxTokens ?? profile.maxOutputTokens,
       maxRetries: 0,
     });
   }
