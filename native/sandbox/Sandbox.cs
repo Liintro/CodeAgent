@@ -1,5 +1,8 @@
 // Windows write-restricted token runner, compiled with the in-box .NET Framework csc (C# 5).
-//   run    --cap <SID> [--extra-restrict <SID>]... --cwd <dir> --cmdline <command line>
+//   run    --cap <SID> [--extra-restrict <SID>]... --cwd <dir> --cmdline <command line> [--parent <pid>]
+//   run    --mode direct --cwd <dir> --cmdline <command line> [--parent <pid>]   (same user token, no restriction)
+// In both modes the command runs inside a kill-on-close Job Object, and the job is terminated when the command
+// exits or when the --parent process (the Agent Host) exits, so a killed Host cannot leave a shell tree behind.
 //   grant  --cap <SID> --path <dir>
 //   revoke --cap <SID> --path <dir>
 using System;
@@ -15,6 +18,7 @@ static class Native
 {
     public const uint DISABLE_MAX_PRIVILEGE = 0x1, WRITE_RESTRICTED = 0x8;
     public const uint TOKEN_ASSIGN_PRIMARY = 0x1, TOKEN_DUPLICATE = 0x2, TOKEN_QUERY = 0x8, TOKEN_ADJUST_DEFAULT = 0x80;
+    public const uint SYNCHRONIZE = 0x00100000;
     public const uint CREATE_SUSPENDED = 0x4, CREATE_NO_WINDOW = 0x08000000;
     public const uint STARTF_USESTDHANDLES = 0x100;
     public const int JobObjectExtendedLimitInformation = 9;
@@ -65,6 +69,8 @@ static class Native
     [DllImport("kernel32.dll", SetLastError = true)] public static extern uint WaitForSingleObject(IntPtr h, uint ms);
     [DllImport("kernel32.dll", SetLastError = true)] public static extern bool GetExitCodeProcess(IntPtr h, out uint code);
     [DllImport("kernel32.dll", SetLastError = true)] public static extern bool TerminateJobObject(IntPtr job, uint code);
+    [DllImport("kernel32.dll", SetLastError = true)] public static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
+    [DllImport("kernel32.dll", SetLastError = true)] public static extern uint WaitForMultipleObjects(uint count, IntPtr[] handles, bool all, uint ms);
     [DllImport("kernel32.dll")] public static extern bool CloseHandle(IntPtr h);
 }
 
@@ -124,28 +130,33 @@ static class Program
 
     static int Run(Dictionary<string, List<string>> o)
     {
-        string cap = One(o, "--cap"), cwd = One(o, "--cwd"), cmdline = One(o, "--cmdline");
-        var restrict = new List<string>(); restrict.Add(cap);
-        List<string> extra; if (o.TryGetValue("--extra-restrict", out extra)) restrict.AddRange(extra);
+        string cwd = One(o, "--cwd"), cmdline = One(o, "--cmdline");
+        List<string> mode; bool direct = o.TryGetValue("--mode", out mode) && mode[0] == "direct";
 
         IntPtr own;
         if (!Native.OpenProcessToken(Native.GetCurrentProcess(), Native.TOKEN_DUPLICATE | Native.TOKEN_QUERY | Native.TOKEN_ASSIGN_PRIMARY | Native.TOKEN_ADJUST_DEFAULT, out own))
             throw new Win32Exception();
-        var sids = new Native.SID_AND_ATTRIBUTES[restrict.Count];
-        for (int i = 0; i < sids.Length; i++) sids[i].Sid = Sid(restrict[i]);
-        IntPtr token;
-        if (!Native.CreateRestrictedToken(own, Native.DISABLE_MAX_PRIVILEGE | Native.WRITE_RESTRICTED, 0, IntPtr.Zero, 0, IntPtr.Zero, (uint)sids.Length, sids, out token))
-            throw new Win32Exception();
+        IntPtr token = own;
+        if (!direct)
+        {
+            string cap = One(o, "--cap");
+            var restrict = new List<string>(); restrict.Add(cap);
+            List<string> extra; if (o.TryGetValue("--extra-restrict", out extra)) restrict.AddRange(extra);
+            var sids = new Native.SID_AND_ATTRIBUTES[restrict.Count];
+            for (int i = 0; i < sids.Length; i++) sids[i].Sid = Sid(restrict[i]);
+            if (!Native.CreateRestrictedToken(own, Native.DISABLE_MAX_PRIVILEGE | Native.WRITE_RESTRICTED, 0, IntPtr.Zero, 0, IntPtr.Zero, (uint)sids.Length, sids, out token))
+                throw new Win32Exception();
 
-        // Objects the child creates (pipes, events) must be openable by the restricting SID too.
-        var dacl = new DiscretionaryAcl(false, false, 3);
-        dacl.AddAccess(AccessControlType.Allow, new SecurityIdentifier(cap), 0x10000000, InheritanceFlags.None, PropagationFlags.None);
-        dacl.AddAccess(AccessControlType.Allow, WindowsIdentity.GetCurrent().User, 0x10000000, InheritanceFlags.None, PropagationFlags.None);
-        dacl.AddAccess(AccessControlType.Allow, new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null), 0x10000000, InheritanceFlags.None, PropagationFlags.None);
-        byte[] bin = new byte[dacl.BinaryLength]; dacl.GetBinaryForm(bin, 0);
-        IntPtr aclMem = Marshal.AllocHGlobal(bin.Length); Marshal.Copy(bin, 0, aclMem, bin.Length);
-        IntPtr info = Marshal.AllocHGlobal(IntPtr.Size); Marshal.WriteIntPtr(info, aclMem);
-        if (!Native.SetTokenInformation(token, Native.TokenDefaultDacl, info, IntPtr.Size)) throw new Win32Exception();
+            // Objects the child creates (pipes, events) must be openable by the restricting SID too.
+            var dacl = new DiscretionaryAcl(false, false, 3);
+            dacl.AddAccess(AccessControlType.Allow, new SecurityIdentifier(cap), 0x10000000, InheritanceFlags.None, PropagationFlags.None);
+            dacl.AddAccess(AccessControlType.Allow, WindowsIdentity.GetCurrent().User, 0x10000000, InheritanceFlags.None, PropagationFlags.None);
+            dacl.AddAccess(AccessControlType.Allow, new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null), 0x10000000, InheritanceFlags.None, PropagationFlags.None);
+            byte[] bin = new byte[dacl.BinaryLength]; dacl.GetBinaryForm(bin, 0);
+            IntPtr aclMem = Marshal.AllocHGlobal(bin.Length); Marshal.Copy(bin, 0, aclMem, bin.Length);
+            IntPtr info = Marshal.AllocHGlobal(IntPtr.Size); Marshal.WriteIntPtr(info, aclMem);
+            if (!Native.SetTokenInformation(token, Native.TokenDefaultDacl, info, IntPtr.Size)) throw new Win32Exception();
+        }
 
         IntPtr job = Native.CreateJobObjectW(IntPtr.Zero, null);
         var limits = new Native.JOBOBJECT_EXTENDED_LIMIT_INFORMATION();
@@ -164,7 +175,17 @@ static class Program
             throw new Win32Exception();
         if (!Native.AssignProcessToJobObject(job, pi.hProcess)) { int e = Marshal.GetLastWin32Error(); Native.TerminateJobObject(job, 1); throw new Win32Exception(e); }
         Native.ResumeThread(pi.hThread);
-        Native.WaitForSingleObject(pi.hProcess, 0xFFFFFFFF);
+
+        // Wait for the command, and also for the Host: if the Host dies first the whole job is terminated.
+        var waits = new List<IntPtr>(); waits.Add(pi.hProcess);
+        List<string> parent;
+        if (o.TryGetValue("--parent", out parent))
+        {
+            IntPtr host = Native.OpenProcess(Native.SYNCHRONIZE, false, int.Parse(parent[0]));
+            if (host == IntPtr.Zero) { Native.TerminateJobObject(job, 1); return 1; } // the Host is already gone
+            waits.Add(host);
+        }
+        if (Native.WaitForMultipleObjects((uint)waits.Count, waits.ToArray(), false, 0xFFFFFFFF) == 1) { Native.TerminateJobObject(job, 1); return 1; }
         uint code; Native.GetExitCodeProcess(pi.hProcess, out code);
         Native.TerminateJobObject(job, 1); // descendants must not outlive the command
         return unchecked((int)code);

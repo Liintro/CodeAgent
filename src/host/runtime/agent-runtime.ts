@@ -520,7 +520,7 @@ ${this.stateBlock(task)}`,
       ? this.sandbox!.operations().exec
       : mode === 'auto'
         ? async () => { throw new Error('Auto 模式需要已验证且已授权的沙箱，验证命令未执行'); }
-        : createLocalPowerShellOperations().exec;
+        : (this.sandbox?.directOperations() ?? createLocalPowerShellOperations()).exec;
     this.setPhase(task, 'verifying', attempt);
     const itemId = (commandId: string) => `${runId}-${attempt}-${commandId}`;
     return verifyRoots(

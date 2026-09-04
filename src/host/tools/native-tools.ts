@@ -86,7 +86,7 @@ function shellTool(ctx: ToolContext): AgentTool<any> {
       const key = `${root.id}:${runner}`;
       let instance = instances.get(key);
       if (!instance) {
-        const operations = runner === 'sandbox' ? ctx.sandbox!.operations() : undefined;
+        const operations = runner === 'sandbox' ? ctx.sandbox!.operations() : ctx.sandbox?.directOperations();
         instances.set(key, instance = createPowerShellTool(root.path, { exposeSessionEnvironment: false, operations }));
       }
       return instance.execute(toolCallId, rest, signal, onUpdate);
