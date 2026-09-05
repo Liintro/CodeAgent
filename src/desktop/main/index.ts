@@ -5,9 +5,13 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { app, BrowserWindow, dialog, ipcMain, shell, utilityProcess, type UtilityProcess } from 'electron';
 import type {
+  Acceptance,
   AppError,
   ApprovalDecision,
   ChangesView,
+  DeliveryActionResult,
+  DeliveryView,
+  DetectedCommand,
   DiffView,
   HostCommand,
   HostRequest,
@@ -27,7 +31,7 @@ import { SettingsStore } from './settings.js';
 
 const USER_MODES: UserMode[] = ['plan', 'manual', 'accept_edits', 'auto', 'bypass'];
 const DECISIONS: ApprovalDecision[] = ['allow', 'allow_task', 'deny'];
-const BUSY_PHASES = ['running', 'awaiting_approval', 'cancelling'];
+const BUSY_PHASES = ['running', 'awaiting_approval', 'verifying', 'cancelling'];
 
 let mainWindow: BrowserWindow | undefined;
 let host: UtilityProcess | undefined;
@@ -49,7 +53,7 @@ if (process.env.CODEAGENT_TEST === '1') app.disableHardwareAcceleration();
 
 function emptySnapshot(hostState: WorkbenchSnapshot['host']): WorkbenchSnapshot {
   return {
-    host: hostState, models: currentModels, model: currentModel, tasks: [], roots: [], sandboxStatus: 'untested', timeline: [], mcp: [],
+    host: hostState, models: currentModels, model: currentModel, tasks: [], roots: [], sandboxStatus: 'untested', timeline: [], mcp: [], acceptance: { commands: [], maxRepairs: 3 },
     permission: { userMode: 'manual', phase: 'act', approval: 'ask_writes_and_commands', scope: 'selected_roots', grants: [] },
   };
 }
@@ -67,6 +71,7 @@ function broadcast(event: WorkbenchEvent): void {
   else if (payload.type === 'approval.requested') lastSnapshot = { ...lastSnapshot, approval: payload.value };
   else if (payload.type === 'sandbox.updated') lastSnapshot = { ...lastSnapshot, sandboxStatus: payload.value };
   else if (payload.type === 'mcp.updated') lastSnapshot = { ...lastSnapshot, mcp: payload.value };
+  else if (payload.type === 'delivery.updated') lastSnapshot = { ...lastSnapshot, delivery: payload.value };
   else if (payload.type === 'changes.updated') lastSnapshot = { ...lastSnapshot, changes: payload.value };
   else if (payload.type === 'error') lastSnapshot = { ...lastSnapshot, error: payload.value };
   mainWindow?.webContents.send('desktop:event', event);
@@ -137,6 +142,7 @@ async function startHost(): Promise<Reply<void>> {
   const initialized = await hostRequest<{ node: string; execPath: string }>({
     type: 'initialize',
     hostInstanceId,
+    dataDir: app.getPath('userData'),
     rulesPath: generated('AGENTS.md'),
     sandboxExe: generated('codeagent-sandbox.exe'),
     sandboxTempDir: join(app.getPath('userData'), 'sandbox-temp'),
@@ -160,7 +166,8 @@ async function startHost(): Promise<Reply<void>> {
       desktopError = { code: 'KEY_DECRYPT_FAILED', message: error instanceof Error ? error.message : String(error) };
     }
   }
-  await hostRequest<void>({ type: 'newTask', rootPaths: store.recentRoots });
+  // 任务列表由 Host 从数据库恢复；只有全新安装（没有任何任务）才创建第一个任务。
+  if (!(await hostSnapshot())?.tasks.length) await hostRequest<void>({ type: 'newTask', rootPaths: store.recentRoots });
   await persistRoots();
   await loadMcp();
   return { ok: true, value: undefined };
@@ -223,12 +230,26 @@ const confirmSandboxGrant = (paths: string[]) => confirm(
   '授予并启用',
 );
 
+// 渲染进程传来的验收配置只在这里校验一次；Host 收到的是已校验的类型化值。
+function validateAcceptance(value: unknown): Acceptance {
+  const input = value as Partial<Acceptance> | undefined;
+  if (!input || !Array.isArray(input.commands) || !Number.isInteger(input.maxRepairs) || input.maxRepairs! < 0 || input.maxRepairs! > 10) throw new Error('验收配置无效');
+  const commands = input.commands.map(item => {
+    const command = item as Record<string, unknown>;
+    const text = (name: string) => typeof command[name] === 'string' && (command[name] as string).trim() ? (command[name] as string).trim() : undefined;
+    const timeout = command.timeoutSeconds;
+    if (!text('id') || !text('rootId') || !text('label') || !text('command') || !Number.isInteger(timeout) || (timeout as number) < 1 || (timeout as number) > 3600) throw new Error('验收命令无效');
+    return { id: text('id')!, rootId: text('rootId')!, label: text('label')!, command: text('command')!, timeoutSeconds: timeout as number };
+  });
+  return { commands, maxRepairs: input.maxRepairs! };
+}
+
 async function persistRoots(): Promise<void> {
   const snapshot = await hostSnapshot();
   if (!snapshot?.taskId) return;
   // 授权路径只增不减，直到 Host 正常退出并撤销；异常退出后下次启动据此清理。
   const granted = snapshot.roots.filter(root => root.sandboxGranted).map(root => root.path);
-  await store.saveRoots(snapshot.roots.map(root => root.path), [...new Set([...store.sandboxGrants, ...granted])]);
+  await store.saveRoots(snapshot.roots.filter(root => !root.missing).map(root => root.path), [...new Set([...store.sandboxGrants, ...granted])]);
 }
 
 handle<SnapshotEnvelope>('desktop:getSnapshot', async () => {
@@ -329,6 +350,24 @@ handle<ChangesView>('desktop:getChanges', async () => hostRequest<ChangesView>({
 handle<DiffView>('desktop:getDiff', async (rootId: unknown, path: unknown) => {
   if (typeof rootId !== 'string' || typeof path !== 'string') throw new Error('差异请求无效');
   return hostRequest<DiffView>({ type: 'getDiff', rootId, path });
+});
+handle<DetectedCommand[]>('desktop:detectAcceptance', async () => hostRequest<DetectedCommand[]>({ type: 'detectAcceptance' }));
+handle<void>('desktop:setAcceptance', async (value: unknown) => hostRequest<void>({ type: 'setAcceptance', acceptance: validateAcceptance(value) }));
+handle<{ runId: string }>('desktop:verifyNow', async () => hostRequest<{ runId: string }>({ type: 'verifyNow' }));
+handle<{ runId: string }>('desktop:continueTask', async () => hostRequest<{ runId: string }>({ type: 'continueTask' }));
+handle<DeliveryView>('desktop:getDelivery', async () => hostRequest<DeliveryView>({ type: 'getDelivery' }, 60000));
+handle<void>('desktop:acceptRoot', async (rootId: unknown) => {
+  if (typeof rootId !== 'string') throw new Error('目录标识无效');
+  return hostRequest<void>({ type: 'acceptRoot', rootId }, 60000);
+});
+handle<DeliveryActionResult | null>('desktop:restoreRoot', async (rootId: unknown) => {
+  if (typeof rootId !== 'string') throw new Error('目录标识无效');
+  if (!await confirm('还原智能体的改动？', '智能体修改过的文件将恢复到任务开始时的内容；新建的文件会被删除。任务之后又被您修改过的文件会被跳过。', '还原')) return { ok: true, value: null };
+  return hostRequest<DeliveryActionResult>({ type: 'restoreRoot', rootId }, 120000);
+});
+handle<DeliveryActionResult>('desktop:commitRoot', async (rootId: unknown, message: unknown, confirmShared: unknown) => {
+  if (typeof rootId !== 'string' || typeof message !== 'string' || typeof confirmShared !== 'boolean') throw new Error('提交请求无效');
+  return hostRequest<DeliveryActionResult>({ type: 'commitRoot', rootId, message, confirmShared }, 120000);
 });
 handle<void>('desktop:reloadMcp', async () => {
   desktopError = undefined;

@@ -5,3 +5,6 @@
 /.secrets/
 /.research/
 *.log
+/tests/fixtures/projects/**/target/
+__pycache__/
+.pytest_cache/

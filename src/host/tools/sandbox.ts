@@ -68,11 +68,20 @@ export class SandboxRunner {
   }
 
   operations(): PowerShellOperations {
+    return this.execute(false);
+  }
+
+  // 直接运行（不受限制的令牌）也经过同一个 helper，只为获得 Job Object：Host 被强制结束时，命令进程树随之终止。
+  directOperations(): PowerShellOperations | undefined {
+    return existsSync(this.exe) ? this.execute(true) : undefined;
+  }
+
+  private execute(direct: boolean): PowerShellOperations {
     return {
       exec: async (command, cwd, { onData, signal, timeout, env }) => {
-        if (this.status !== 'available') throw new Error('沙箱不可用，命令未执行');
+        if (!direct && this.status !== 'available') throw new Error('沙箱不可用，命令未执行');
         if (signal?.aborted) throw new Error('aborted');
-        const child = this.spawnRunner(UTF8_OUTPUT_PREFIX + command, cwd, env);
+        const child = this.spawnRunner(UTF8_OUTPUT_PREFIX + command, cwd, env, direct);
         let timedOut = false;
         let head = '';
         const kill = () => { if (child.pid) killTree(child.pid); };
@@ -91,7 +100,7 @@ export class SandboxRunner {
           });
           if (signal?.aborted) throw new Error('aborted');
           if (timedOut) throw new Error(`timeout:${timeout}`);
-          if (exitCode === 125 && head.startsWith('sandbox: ')) throw new Error(`沙箱启动失败，命令未执行：${head.trim()}`);
+          if (exitCode === 125 && head.startsWith('sandbox: ')) throw new Error(`${direct ? '命令启动失败' : '沙箱启动失败'}，命令未执行：${head.trim()}`);
           return { exitCode };
         } finally {
           if (timer) clearTimeout(timer);
@@ -112,15 +121,18 @@ export class SandboxRunner {
     });
   }
 
-  private spawnRunner(command: string, cwd: string, env: NodeJS.ProcessEnv = process.env) {
+  private spawnRunner(command: string, cwd: string, env: NodeJS.ProcessEnv = process.env, direct = false) {
     const shellArgs = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', command];
     const cmdline = [findPowerShell(), ...shellArgs].map(quoteArg).join(' ');
+    // --parent：Host 退出时 helper 终止整个 Job。
+    const common = ['--parent', String(process.pid), '--cwd', cwd, '--cmdline', cmdline];
+    if (direct) return spawn(this.exe, ['run', '--mode', 'direct', ...common], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env });
     const restricting = RESTRICTING_SIDS.flatMap(sid => ['--extra-restrict', sid]);
-    // PowerShell 在 TEMP 不可写时会静默降级为 ConstrainedLanguage，因此必须指向已授权目录。
-    return spawn(this.exe, ['run', '--cap', this.capSid, ...restricting, '--cwd', cwd, '--cmdline', cmdline], {
+    // PowerShell 在 TEMP 不可写时会静默降级为 ConstrainedLanguage，因此必须指向已授权目录；uv 的缓存同理。
+    return spawn(this.exe, ['run', '--cap', this.capSid, ...restricting, ...common], {
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
-      env: { ...env, TEMP: this.tempDir, TMP: this.tempDir },
+      env: { ...env, TEMP: this.tempDir, TMP: this.tempDir, UV_CACHE_DIR: join(this.tempDir, 'uv-cache') },
     });
   }
 }
