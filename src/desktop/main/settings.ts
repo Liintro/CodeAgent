@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { safeStorage } from 'electron';
 import type { KeyChange, ModelInput, ModelProfile } from '../../shared/contracts.js';
@@ -23,8 +23,11 @@ export function validateModelInput(value: unknown): ModelInput {
   if (!Number.isInteger(input.contextWindow) || (input.contextWindow as number) <= 0) throw new Error('上下文预算必须为正整数');
   if (!Number.isInteger(input.maxOutputTokens) || (input.maxOutputTokens as number) <= 0) throw new Error('输出预算必须为正整数');
   if ((input.maxOutputTokens as number) >= (input.contextWindow as number)) throw new Error('输出预算必须小于上下文预算');
+  const text = (name: string) => typeof input[name] === 'string' ? (input[name] as string).trim() : '';
   return {
     id: typeof input.id === 'string' && input.id ? input.id : 'default',
+    name: text('name') || modelId,
+    provider: text('provider'),
     api: 'openai-completions',
     baseUrl,
     modelId,
@@ -63,7 +66,9 @@ export class SettingsStore {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
       this.settings = { models: [], recentRoots: [], sandboxGrants: [] };
-      throw new Error('配置文件损坏，请重新保存模型配置', { cause: error });
+      // 之后的任何保存都会覆盖该文件，先留一份备份以便找回已保存的模型与密钥。
+      await copyFile(this.file, `${this.file}.bak`).catch(() => undefined);
+      throw new Error('配置文件损坏，已备份为 settings.json.bak，请重新保存模型配置', { cause: error });
     }
   }
 
@@ -88,6 +93,9 @@ export class SettingsStore {
       if (!keyChange.value) throw new Error('API Key 不能为空');
       if (!await safeStorage.isAsyncEncryptionAvailable()) throw new Error('当前系统无法加密保存 API Key');
       encryptedApiKey = (await safeStorage.encryptStringAsync(keyChange.value)).toString('base64');
+    } else if (keyChange.action === 'copy') {
+      encryptedApiKey = this.settings.models.find(model => model.id === keyChange.fromId)?.encryptedApiKey;
+      if (!encryptedApiKey) throw new Error('所选模型没有已保存的密钥');
     } else if (keyChange.action === 'remove') {
       encryptedApiKey = undefined;
     }
@@ -103,6 +111,14 @@ export class SettingsStore {
     await this.persist({ ...this.settings, activeModelId: modelId });
     this.settings = { ...this.settings, activeModelId: modelId };
     return this.model!;
+  }
+
+  async deleteModel(modelId: string): Promise<void> {
+    const models = this.settings.models.filter(model => model.id !== modelId);
+    if (models.length === this.settings.models.length) throw new Error('模型配置不存在');
+    const activeModelId = this.settings.activeModelId === modelId ? models[0]?.id : this.settings.activeModelId;
+    await this.persist({ ...this.settings, models, activeModelId });
+    this.settings = { ...this.settings, models, activeModelId };
   }
 
   async decryptApiKey(): Promise<string | undefined> {

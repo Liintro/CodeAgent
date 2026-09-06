@@ -41,7 +41,7 @@ export function Sidebar({ view, active, ready, onNewTask, onSelect, onSettings, 
       <div className="sidebar-footer">
         <button className="sidebar-action" onClick={onSettings}>模型设置</button>
         <button className="sidebar-action" onClick={onMcp}>MCP{view.mcp.length ? ` ${readyServers}/${view.mcp.length}` : ''}</button>
-        <span className="model-name" title={view.model?.modelId}>{view.model?.modelId ?? '未配置模型'}</span>
+        <span className="model-name" title={view.model?.modelId}>{view.model?.name ?? '未配置模型'}</span>
       </div>
     </aside>
   );

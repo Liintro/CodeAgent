@@ -11,6 +11,7 @@ const bridge: DesktopBridge = {
   setPermission: userMode => invoke('desktop:setPermission', userMode),
   saveModel: (profile, keyChange) => invoke('desktop:saveModel', profile, keyChange),
   selectModel: modelId => invoke('desktop:selectModel', modelId),
+  deleteModel: modelId => invoke('desktop:deleteModel', modelId),
   testModel: () => invoke('desktop:testModel'),
   startMessage: text => invoke('desktop:startMessage', text),
   implementPlan: () => invoke('desktop:implementPlan'),

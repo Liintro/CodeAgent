@@ -81,6 +81,8 @@ export default function App() {
     return reply;
   }
 
+  const deleteModel = (modelId: string) => window.codeAgent.deleteModel(modelId);
+
   const cancel = async () => {
     if (view.run) await call(window.codeAgent.cancelRun(view.run.id));
   };
@@ -117,7 +119,7 @@ export default function App() {
           </div>
           {view.models.length > 1 && (
             <select className="model-select" aria-label="切换模型" value={view.model?.id} disabled={active} onChange={event => call(window.codeAgent.selectModel(event.target.value))}>
-              {view.models.map(model => <option key={model.id} value={model.id}>{model.modelId}</option>)}
+              {view.models.map(model => <option key={model.id} value={model.id}>{model.name}</option>)}
             </select>
           )}
           <button className="ghost-button" aria-label="验收面板" aria-pressed={panel === 'acceptance'} onClick={() => togglePanel('acceptance')}>验收</button>
@@ -164,6 +166,7 @@ export default function App() {
           active={active}
           onClose={() => setSettingsOpen(false)}
           onSave={saveModel}
+          onDelete={deleteModel}
           onTest={() => window.codeAgent.testModel()}
           onCancel={cancel}
         />

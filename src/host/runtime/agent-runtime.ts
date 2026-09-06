@@ -150,13 +150,15 @@ export class AgentRuntime {
     return { hostInstanceId: this.hostInstanceId, seq: this.seq, value: this.snapshot() };
   }
 
-  setModel(profile: ModelInput, apiKey?: string, models?: ModelProfile[]): ModelProfile {
+  setModel(profile: ModelInput | undefined, apiKey?: string, models?: ModelProfile[]): ModelProfile | undefined {
     this.assertIdle();
     this.profile = profile;
     this.apiKey = apiKey;
-    this.models = models ?? [{ ...profile, hasApiKey: Boolean(apiKey) }];
+    // 当前模型的密钥解密失败时，列表里也要显示为未配置，提示用户重新输入。
+    this.models = (models ?? (profile ? [{ ...profile, hasApiKey: true }] : []))
+      .map(item => item.id === profile?.id ? { ...item, hasApiKey: Boolean(apiKey) } : item);
     this.emitSnapshot();
-    return { ...profile, hasApiKey: Boolean(apiKey) };
+    return profile && { ...profile, hasApiKey: Boolean(apiKey) };
   }
 
   async setMcpServers(servers: McpServerDefinition[]): Promise<void> {
