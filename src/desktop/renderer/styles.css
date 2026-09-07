@@ -246,16 +246,27 @@ pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12.5
 .form-body label { display: grid; gap: 6px; color: var(--muted); font-size: 13px; }
 .form-body input:not([type="checkbox"]) { width: 100%; padding: 9px 11px; border: 1px solid var(--border-strong); border-radius: 8px; color: var(--text); background: var(--surface); }
 .form-body .checkbox-label { display: flex; align-items: center; gap: 8px; }
-.profile-picker { display: flex; align-items: flex-end; gap: 10px; }
-.profile-picker label { flex: 1; }
-.profile-picker select { width: 100%; padding: 9px 11px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); }
-.profile-picker > button { white-space: nowrap; }
+.form-body select { width: 100%; padding: 9px 11px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); }
+.model-modal { width: min(760px, 100%); }
+.model-layout { display: grid; grid-template-columns: 220px 1fr; }
+.model-list { display: grid; align-content: start; gap: 6px; padding: 8px 0 20px 22px; max-height: 420px; overflow-y: auto; }
+.model-item { display: grid; gap: 2px; padding: 9px 11px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); text-align: left; }
+.model-item:hover:not(:disabled) { background: var(--surface-2); }
+.model-item.selected { border-color: var(--accent); background: var(--accent-soft); }
+.model-item.new-model { color: var(--accent); }
+.model-item-name { display: flex; align-items: center; gap: 6px; overflow: hidden; font-size: 13px; font-weight: 600; }
+.model-item-name em { flex-shrink: 0; padding: 0 6px; border-radius: 10px; background: var(--accent); color: #fff; font-size: 10.5px; font-style: normal; font-weight: 500; }
+.model-item small { overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; }
+.model-item small.key-ok { color: var(--ok); }
+.model-item small.key-missing { color: var(--warn); }
+.field-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .advanced-settings { color: var(--muted); font-size: 13px; }
 .advanced-settings summary { cursor: pointer; }
 .budget-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
 .modal-footer { display: flex; justify-content: space-between; align-items: center; padding: 14px 22px; border-top: 1px solid var(--border); }
 .modal-footer > div { display: flex; gap: 8px; }
 .settings-message { margin: 0; color: var(--bad); font-size: 12.5px; }
+.settings-message.ok { color: var(--ok); }
 .test-result { padding: 12px; border-radius: 8px; background: var(--surface-2); }
 .mcp-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
 .mcp-row .checkbox-label { flex: 1; }

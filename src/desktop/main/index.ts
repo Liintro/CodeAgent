@@ -156,21 +156,31 @@ async function startHost(): Promise<Reply<void>> {
   if (store.sandboxGrants.length) await store.saveRoots(store.recentRoots, []);
   log(`host_ready node=${initialized.value.node} execPath=${initialized.value.execPath}`);
   if (store.model) {
-    try {
-      const apiKey = await store.decryptApiKey();
-      const configured = await hostRequest<ModelProfile>({ type: 'setModel', profile: store.model, apiKey, models: store.models });
-      if (!configured.ok) return configured;
-      currentModel = configured.value;
-      currentModels = store.models;
-    } catch (error) {
-      desktopError = { code: 'KEY_DECRYPT_FAILED', message: error instanceof Error ? error.message : String(error) };
-    }
+    const configured = await applyModels();
+    if (!configured.ok) return configured;
   }
   // 任务列表由 Host 从数据库恢复；只有全新安装（没有任何任务）才创建第一个任务。
   if (!(await hostSnapshot())?.tasks.length) await hostRequest<void>({ type: 'newTask', rootPaths: store.recentRoots });
   await persistRoots();
   await loadMcp();
   return { ok: true, value: undefined };
+}
+
+// 已保存的模型列表与当前模型的密钥一起交给 Host。当前模型的密钥无法解密时，模型列表仍然显示，仅该模型需要重新输入密钥。
+async function applyModels(): Promise<Reply<ModelProfile | undefined>> {
+  let apiKey: string | undefined;
+  desktopError = undefined;
+  try {
+    apiKey = await store.decryptApiKey();
+  } catch (error) {
+    desktopError = { code: 'KEY_DECRYPT_FAILED', message: error instanceof Error ? error.message : String(error) };
+  }
+  const configured = await hostRequest<ModelProfile | undefined>({ type: 'setModel', profile: store.model, apiKey, models: store.models });
+  if (configured.ok) {
+    currentModel = configured.value;
+    currentModels = store.models;
+  }
+  return configured;
 }
 
 async function loadMcp(): Promise<Reply<void>> {
@@ -301,27 +311,27 @@ handle<PermissionSetting | null>('desktop:setPermission', async (userMode: unkno
 });
 
 handle<ModelProfile>('desktop:saveModel', async (profile: unknown, keyChange: KeyChange) => {
-  if (!keyChange || !['keep', 'replace', 'remove'].includes(keyChange.action)) throw new Error('密钥操作无效');
+  if (!keyChange || !['keep', 'replace', 'copy', 'remove'].includes(keyChange.action)) throw new Error('密钥操作无效');
   await assertIdle();
   const model = await store.saveModel(profile, keyChange);
-  const configured = await hostRequest<ModelProfile>({ type: 'setModel', profile: model, apiKey: await store.decryptApiKey(), models: store.models });
-  if (!configured.ok) return configured;
-  currentModel = configured.value;
-  currentModels = store.models;
-  desktopError = undefined;
-  return configured;
+  const applied = await applyModels();
+  return applied.ok ? { ok: true, value: model } : applied;
 });
 
 handle<ModelProfile>('desktop:selectModel', async (modelId: unknown) => {
   if (typeof modelId !== 'string') throw new Error('模型标识无效');
   await assertIdle();
   const model = await store.selectModel(modelId);
-  const configured = await hostRequest<ModelProfile>({ type: 'setModel', profile: model, apiKey: await store.decryptApiKey(), models: store.models });
-  if (!configured.ok) return configured;
-  currentModel = configured.value;
-  currentModels = store.models;
-  desktopError = undefined;
-  return configured;
+  const applied = await applyModels();
+  return applied.ok ? { ok: true, value: model } : applied;
+});
+
+handle<void>('desktop:deleteModel', async (modelId: unknown) => {
+  if (typeof modelId !== 'string') throw new Error('模型标识无效');
+  await assertIdle();
+  await store.deleteModel(modelId);
+  const applied = await applyModels();
+  return applied.ok ? { ok: true, value: undefined } : applied;
 });
 
 handle<{ text: string }>('desktop:testModel', async () => hostRequest<{ text: string }>({ type: 'testModel' }, 45000));

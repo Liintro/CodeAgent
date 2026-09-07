@@ -22,6 +22,8 @@ export type AppError = { code: string; message: string; detail?: string };
 
 export type ModelProfile = {
   id: string;
+  name: string;
+  provider: string;
   api: 'openai-completions';
   baseUrl: string;
   modelId: string;
@@ -32,7 +34,7 @@ export type ModelProfile = {
 };
 
 export type ModelInput = Omit<ModelProfile, 'hasApiKey'>;
-export type KeyChange = { action: 'keep' } | { action: 'replace'; value: string } | { action: 'remove' };
+export type KeyChange = { action: 'keep' } | { action: 'replace'; value: string } | { action: 'copy'; fromId: string } | { action: 'remove' };
 
 export type RootView = {
   id: string;
@@ -233,6 +235,7 @@ export interface DesktopBridge {
   setPermission(userMode: UserMode): Promise<Reply<PermissionSetting | null>>;
   saveModel(profile: ModelInput, keyChange: KeyChange): Promise<Reply<ModelProfile>>;
   selectModel(modelId: string): Promise<Reply<ModelProfile>>;
+  deleteModel(modelId: string): Promise<Reply<void>>;
   testModel(): Promise<Reply<{ text: string }>>;
   startMessage(text: string): Promise<Reply<{ runId: string }>>;
   implementPlan(): Promise<Reply<{ runId: string }>>;
@@ -259,7 +262,7 @@ export interface DesktopBridge {
 
 export type HostCommand =
   | { type: 'initialize'; hostInstanceId: string; dataDir: string; rulesPath: string; sandboxExe: string; sandboxTempDir: string; staleGrants: string[] }
-  | { type: 'setModel'; profile: ModelInput; apiKey?: string; models: ModelProfile[] }
+  | { type: 'setModel'; profile?: ModelInput; apiKey?: string; models: ModelProfile[] }
   | { type: 'newTask'; rootPaths: string[] }
   | { type: 'selectTask'; taskId: string }
   | { type: 'addRoot'; path: string; grantSandbox: boolean }
