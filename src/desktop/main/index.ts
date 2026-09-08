@@ -105,7 +105,13 @@ async function startHost(): Promise<Reply<void>> {
   const entry = fileURLToPath(new URL('../../host/index.js', import.meta.url));
   if (!existsSync(entry)) return { ok: false, error: { code: 'HOST_ENTRY_MISSING', message: '运行进程入口不存在', detail: entry } };
   log(`host_start entry=${entry} electron=${process.versions.electron} arch=${process.arch}`);
-  const child = utilityProcess.fork(entry, [], { stdio: 'pipe', serviceName: 'CodeAgent Agent Host' });
+  // Pi 的 grep/find 依赖 rg/fd：用随应用分发的固定版本，并使用应用自己的 Pi 目录且禁止联网下载，不读写用户的 ~/.pi。
+  const toolsDir = fileURLToPath(new URL('../../../../resources/generated/tools', import.meta.url));
+  const child = utilityProcess.fork(entry, [], {
+    stdio: 'pipe',
+    serviceName: 'CodeAgent Agent Host',
+    env: { ...process.env, PATH: `${toolsDir};${process.env.PATH ?? ''}`, PI_CODING_AGENT_DIR: join(app.getPath('userData'), 'pi-agent'), PI_OFFLINE: '1' },
+  });
   host = child;
   child.stdout?.on('data', () => undefined);
   child.stderr?.on('data', chunk => process.stderr.write(chunk));
