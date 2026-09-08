@@ -41,6 +41,9 @@ import {
   type WorkbenchSnapshot,
 } from '../../shared/contracts.js';
 import { DEFAULT_MAX_REPAIRS } from '../../shared/constants.js';
+import { captureOutcome } from '../memory/capture.js';
+import { repoOf } from '../memory/repo.js';
+import { MemoryStore } from '../memory/store.js';
 import { McpManager } from '../tools/mcp.js';
 import { createRootTools } from '../tools/native-tools.js';
 import { ApprovalBroker, classify, permissionFor, registered, verdict } from '../tools/permission.js';
@@ -105,6 +108,7 @@ export class AgentRuntime {
   private assistantId?: string;
   private seq = 0;
   private readonly ledger: Ledger;
+  private readonly memory: MemoryStore;
   private readonly broker = new ApprovalBroker();
   private readonly mcp: McpManager;
   private readonly sandbox?: SandboxRunner;
@@ -120,6 +124,7 @@ export class AgentRuntime {
     private readonly dataDir?: string,
   ) {
     this.ledger = new Ledger(dataDir ? join(dataDir, 'data', 'tasks.sqlite') : ':memory:');
+    this.memory = new MemoryStore(this.ledger.database);
     this.mcp = new McpManager(() => this.emit({ type: 'mcp.updated', value: this.mcp.statuses() }));
     if (sandbox) {
       this.sandbox = new SandboxRunner(sandbox.exe, sandbox.tempDir);
@@ -334,14 +339,24 @@ export class AgentRuntime {
 
   async acceptRoot(rootId: string): Promise<void> {
     await this.deliveryAction(rootId, input => delivery.acceptRoot(input, rootId));
+    await this.captureAfterAction();
   }
 
-  restoreRoot(rootId: string): Promise<DeliveryActionResult> {
-    return this.deliveryAction(rootId, input => delivery.restoreRoot(input, rootId));
+  // 还原后，该 Task 在这个仓库产生的记忆不再可信。
+  async restoreRoot(rootId: string): Promise<DeliveryActionResult> {
+    const result = await this.deliveryAction(rootId, input => delivery.restoreRoot(input, rootId));
+    const task = this.requireTask();
+    const root = task.roots.find(item => item.id === rootId);
+    const rejected = root && this.memory.rejectTask(task.id, (await repoOf(root)).id);
+    const last = this.ledger.lastRun(task.id);
+    if (rejected && last) this.ledger.appendEvent(last.id, 'memory.changed', { action: 'rejected_by_restore', count: rejected, rootId });
+    return result;
   }
 
-  commitRoot(rootId: string, message: string, confirmShared: boolean): Promise<DeliveryActionResult> {
-    return this.deliveryAction(rootId, input => delivery.commitRoot(input, rootId, message, confirmShared));
+  async commitRoot(rootId: string, message: string, confirmShared: boolean): Promise<DeliveryActionResult> {
+    const result = await this.deliveryAction(rootId, input => delivery.commitRoot(input, rootId, message, confirmShared));
+    await this.captureAfterAction();
+    return result;
   }
 
   async shutdown(): Promise<void> {
@@ -551,7 +566,8 @@ ${this.stateBlock(task)}`,
     if (task.permission.userMode !== 'plan') {
       const trees = await this.snapshotRoots(task, runId, 'run_end');
       await this.refreshChanges(task, trees);
-      await this.finalizeDelivery(task, runId, trees);
+      const view = await this.finalizeDelivery(task, runId, trees);
+      if (view) await this.captureMemory(task, runId, view);
     }
     this.ledger.appendEvent(runId, 'run.ended', { phase, stopReason, error });
     this.ledger.endRun(runId, phase, stopReason, this.profile?.modelId);
@@ -955,13 +971,33 @@ ${this.stateBlock(task)}`,
   }
 
   // 结束阶段的记账失败（例如目录已被删除）不能让 Run 卡在运行中，只记录原因。
-  private async finalizeDelivery(task: TaskState, runId: string, trees: Map<string, string>): Promise<void> {
+  private async finalizeDelivery(task: TaskState, runId: string, trees: Map<string, string>): Promise<DeliveryView | undefined> {
     try {
       const view = await delivery.persistDelivery(this.deliveryInput(task), await this.refreshDelivery(task, trees), this.evidenceRoot());
       this.ledger.appendEvent(runId, 'delivery.changed', { state: view.state, roots: view.roots.map(root => ({ rootId: root.rootId, state: root.state, reportFile: root.reportFile })) });
+      return view;
     } catch (error) {
       this.ledger.appendEvent(runId, 'delivery.changed', { error: error instanceof Error ? error.message : String(error) });
+      return undefined;
     }
+  }
+
+  // 在 Run 结束前同步完成（不是后台任务）；失败只记录原因，Run 照常结束。
+  private async captureMemory(task: TaskState, runId: string, view: DeliveryView): Promise<void> {
+    try {
+      const commitShas = new Map(this.ledger.deliveryRows(task.id).flatMap(row => row.commitSha ? [[row.rootId, row.commitSha] as const] : []));
+      const items = await captureOutcome(this.memory, this.ledger, task, view, runId, commitShas);
+      if (items.length) this.ledger.appendEvent(runId, 'memory.captured', { items });
+    } catch (error) {
+      this.ledger.appendEvent(runId, 'memory.capture_failed', { message: error instanceof Error ? error.message : String(error) });
+    }
+  }
+
+  // 用户接受或提交之后再捕获一次：同样的签名只会补上 commit_sha。
+  private async captureAfterAction(): Promise<void> {
+    const task = this.requireTask();
+    const last = this.ledger.lastRun(task.id);
+    if (last && task.deliveryView) await this.captureMemory(task, last.id, task.deliveryView);
   }
 
   private evidenceRoot(): string {

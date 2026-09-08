@@ -178,10 +178,14 @@ export type RootDelivery = {
 export type DeliveryView = { taskId: string; state: Delivery; roots: RootDelivery[] };
 export type DeliveryActionResult = { rootId: string; skipped: string[]; commitSha?: string };
 
+export type MemoryKind = 'change' | 'fix' | 'convention' | 'note';
+export type MemoryValidity = 'current' | 'drifted' | 'reverted' | 'not_in_history' | 'unverifiable';
+
 export type RunEventType =
   | 'run.started' | 'git.snapshot' | 'tool.requested' | 'permission.decided' | 'tool.started'
   | 'tool.finished' | 'model.usage' | 'run.ended'
-  | 'verification.started' | 'verification.finished' | 'repair.requested' | 'compaction.done' | 'delivery.changed';
+  | 'verification.started' | 'verification.finished' | 'repair.requested' | 'compaction.done' | 'delivery.changed'
+  | 'memory.recalled' | 'memory.captured' | 'memory.capture_failed' | 'memory.changed';
 export type RunEvent = { runId: string; seq: number; at: number; type: RunEventType; data: Record<string, unknown> };
 
 export type WorkbenchSnapshot = {

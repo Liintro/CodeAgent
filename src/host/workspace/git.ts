@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { copyFile, mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -8,9 +9,9 @@ export type GitInfo = { gitRoot: string; branch?: string; head?: string };
 
 const DIFF_LIMIT = 256 * 1024;
 
-function git(cwd: string, args: string[], env: NodeJS.ProcessEnv = {}, maxBuffer = 64 * 1024 * 1024): Promise<string> {
+function git(cwd: string, args: string[], env: NodeJS.ProcessEnv = {}, maxBuffer = 64 * 1024 * 1024, input?: string): Promise<string> {
   return new Promise((resolveOutput, reject) => {
-    execFile('git', ['-c', 'core.quotepath=off', ...args], {
+    const child = execFile('git', ['-c', 'core.quotepath=off', ...args], {
       cwd,
       windowsHide: true,
       maxBuffer,
@@ -19,6 +20,7 @@ function git(cwd: string, args: string[], env: NodeJS.ProcessEnv = {}, maxBuffer
       if (error) reject(Object.assign(error, { stderr }));
       else resolveOutput(stdout);
     });
+    if (input !== undefined) child.stdin?.end(input);
   });
 }
 
@@ -134,4 +136,67 @@ export async function commitPaths(rootPath: string, message: string, tracked: st
   if (created.length) await git(rootPath, ['add', '-N', '--', ...created]);
   await git(rootPath, ['commit', '--only', '-m', message, '--', ...tracked, ...created]);
   return (await git(rootPath, ['rev-parse', 'HEAD'])).trim();
+}
+
+// ---- 记忆：仓库标识、内容标识与有效性检查（只读，路径均相对 Git 顶层目录） ----
+
+// 第一个根提交的哈希，克隆、工作树和目录移动后保持不变。浅克隆的“根”只是截断边界，空仓库没有提交，
+// 这两种情况退回到按路径区分的标识。
+export async function repoId(gitRoot: string): Promise<string> {
+  const shallow = await git(gitRoot, ['rev-parse', '--is-shallow-repository']).then(value => value.trim() === 'true', () => false);
+  const roots = shallow ? '' : await git(gitRoot, ['rev-list', '--max-parents=0', 'HEAD']).catch(() => '');
+  return roots.split('\n').filter(Boolean).sort()[0] ?? pathRepoId(gitRoot);
+}
+
+export function pathRepoId(path: string): string {
+  return `path:${createHash('sha1').update(path.toLowerCase()).digest('hex').slice(0, 16)}`;
+}
+
+// 目录相对 Git 顶层目录的前缀（目录是子目录时才非空），带结尾的斜杠。
+export async function prefixOf(rootPath: string): Promise<string> {
+  return (await git(rootPath, ['rev-parse', '--show-prefix'])).trim();
+}
+
+// 批量读取树中路径的 blob 标识；路径不存在对应 undefined。一次进程调用，避免逐个路径启动 git（Windows 上每次约 100 ms）。
+export async function blobsAt(gitRoot: string, tree: string, paths: string[]): Promise<(string | undefined)[]> {
+  if (!paths.length) return [];
+  const output = await git(gitRoot, ['cat-file', '--batch-check'], {}, 64 * 1024 * 1024, paths.map(path => `${tree}:${path}`).join('\n') + '\n');
+  return output.split('\n').slice(0, paths.length).map(line => /^([0-9a-f]{40}) blob /.exec(line)?.[1]);
+}
+
+// 工作区文件当前的 blob 标识（与树中的标识同一算法，含换行转换）；调用方保证文件存在。
+export async function hashFiles(gitRoot: string, paths: string[]): Promise<string[]> {
+  if (!paths.length) return [];
+  return (await git(gitRoot, ['hash-object', '--stdin-paths'], {}, 64 * 1024 * 1024, paths.join('\n') + '\n')).split('\n').filter(Boolean);
+}
+
+export async function isAncestor(gitRoot: string, commit: string): Promise<boolean> {
+  return git(gitRoot, ['merge-base', '--is-ancestor', commit, 'HEAD']).then(() => true, () => false);
+}
+
+// since 之后触及这些路径的提交（最多 20 条，短哈希加标题）。
+export async function logSince(gitRoot: string, since: string, paths: string[]): Promise<string[]> {
+  const output = await git(gitRoot, ['log', '--format=%h %s', '-n', '20', `${since}..HEAD`, '--', ...paths]).catch(() => '');
+  return output.split('\n').filter(Boolean);
+}
+
+// 索引中内容为给定 blob 的路径，用于识别未改内容的重命名。
+export async function pathsWithBlob(gitRoot: string, blobs: string[]): Promise<Map<string, string>> {
+  const wanted = new Set(blobs);
+  const found = new Map<string, string>();
+  for (const line of (await git(gitRoot, ['ls-files', '-s']).catch(() => '')).split('\n')) {
+    const match = /^\d+ ([0-9a-f]{40}) 0\t(.*)$/.exec(line);
+    if (match && wanted.has(match[1]) && !found.has(match[1])) found.set(match[1], match[2]);
+  }
+  return found;
+}
+
+// 两个树之间的变更路径（相对 Git 顶层，不做重命名检测）。
+export async function treeChanges(gitRoot: string, a: string, b: string): Promise<string[]> {
+  return (await git(gitRoot, ['diff', '--no-renames', '--name-only', '-z', a, b])).split('\0').filter(Boolean);
+}
+
+// 两个树之间的统一差异，只用于生成千余字符的摘录，所以最多读取前 64 KB。
+export async function treeDiff(gitRoot: string, a: string, b: string): Promise<string> {
+  return (await git(gitRoot, ['diff', '--no-renames', '--no-color', '-U2', a, b])).slice(0, 64 * 1024);
 }
