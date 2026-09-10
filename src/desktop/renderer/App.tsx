@@ -12,7 +12,7 @@ const initial: SnapshotEnvelope = {
   seq: 0,
   value: {
     host: 'starting', models: [], tasks: [], roots: [], timeline: [], mcp: [], sandboxStatus: 'untested', acceptance: { commands: [], maxRepairs: 3 },
-    permission: { userMode: 'manual', phase: 'act', approval: 'ask_writes_and_commands', scope: 'selected_roots', grants: [] },
+    permission: { userMode: 'manual', phase: 'act', approval: 'ask_writes_and_commands', scope: 'selected_roots', grants: [] }, memoryEnabled: true,
   },
 };
 export const activePhases = ['running', 'awaiting_approval', 'verifying', 'cancelling'];
@@ -122,6 +122,7 @@ export default function App() {
               {view.models.map(model => <option key={model.id} value={model.id}>{model.name}</option>)}
             </select>
           )}
+          <button className="ghost-button" aria-label="记忆面板" aria-pressed={panel === 'memory'} onClick={() => togglePanel('memory')}>记忆</button>
           <button className="ghost-button" aria-label="验收面板" aria-pressed={panel === 'acceptance'} onClick={() => togglePanel('acceptance')}>验收</button>
           <button className="ghost-button" aria-label="变更面板" aria-pressed={panel === 'changes'} onClick={() => togglePanel('changes')}>变更{changeCount ? ` ${changeCount}` : ''}</button>
         </header>

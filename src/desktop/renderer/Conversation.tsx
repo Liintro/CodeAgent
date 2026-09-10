@@ -1,5 +1,6 @@
 import { memo, useEffect, useRef } from 'react';
 import type { ApprovalDecision, ApprovalRequest, TimelineItem, ToolItem, VerificationItem } from '../../shared/contracts';
+import { kindText, validityText } from './MemoryPanel';
 
 type Props = {
   timeline: TimelineItem[];
@@ -77,6 +78,16 @@ const Row = memo(function Row({ item, pending }: { item: TimelineItem; pending: 
   if (item.kind === 'tool') return <ToolCard item={item} />;
   if (item.kind === 'verification') return <VerificationCard item={item} />;
   if (item.kind === 'notice') return <div className="notice"><span>{item.text}</span></div>;
+  if (item.kind === 'memory') {
+    return (
+      <details className="harness-note memory-note">
+        <summary>已引用 {item.items.length} 条记忆</summary>
+        {item.items.map(entry => (
+          <p key={entry.id}><span className="tag">{kindText[entry.kind]}</span> <span className={`delivery-chip validity-${entry.validity}`}>{validityText[entry.validity]}</span> {entry.text}</p>
+        ))}
+      </details>
+    );
+  }
   if (item.harness) {
     const recovery = item.text.startsWith('[任务恢复说明]');
     return (

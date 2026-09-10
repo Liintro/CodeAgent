@@ -19,6 +19,8 @@ import {
   type DeliveryView,
   type DetectedCommand,
   type DiffView,
+  type MemoryChange,
+  type MemoryItemView,
   type McpServerDefinition,
   type ModelInput,
   type ModelProfile,
@@ -40,10 +42,12 @@ import {
   type WorkbenchEvent,
   type WorkbenchSnapshot,
 } from '../../shared/contracts.js';
-import { DEFAULT_MAX_REPAIRS } from '../../shared/constants.js';
+import { CONTINUE_TEXT, DEFAULT_MAX_REPAIRS, IMPLEMENT_PLAN_TEXT, VERIFY_ONLY_TEXT } from '../../shared/constants.js';
 import { captureOutcome } from '../memory/capture.js';
-import { repoOf } from '../memory/repo.js';
+import { injectSlots, recall, tokensOf, type Failure, type Slot } from '../memory/recall.js';
+import { repoOf, type RepoRef } from '../memory/repo.js';
 import { MemoryStore } from '../memory/store.js';
+import { evaluate, type Evaluation } from '../memory/validity.js';
 import { McpManager } from '../tools/mcp.js';
 import { createRootTools } from '../tools/native-tools.js';
 import { ApprovalBroker, classify, permissionFor, registered, verdict } from '../tools/permission.js';
@@ -93,8 +97,6 @@ type SandboxOptions = { exe: string; tempDir: string };
 const ARGS_TEXT_LIMIT = 4 * 1024;
 const APPROVAL_ARGS_LIMIT = 8 * 1024;
 const OUTPUT_PREVIEW_LIMIT = 8 * 1024;
-const IMPLEMENT_PLAN_TEXT = '请按照上面的计划开始实施。';
-const CONTINUE_TEXT = '请从当前的实际状态继续完成上一次被中断的任务。';
 
 export class AgentRuntime {
   private profile?: ModelInput;
@@ -109,6 +111,7 @@ export class AgentRuntime {
   private seq = 0;
   private readonly ledger: Ledger;
   private readonly memory: MemoryStore;
+  private memoryEnabled = true;
   private readonly broker = new ApprovalBroker();
   private readonly mcp: McpManager;
   private readonly sandbox?: SandboxRunner;
@@ -266,7 +269,7 @@ export class AgentRuntime {
     const task = this.requireTask();
     if (task.permission.userMode === 'plan') throw new Error('计划模式不执行验证命令');
     if (!task.acceptance.commands.length) throw new Error('请先确认验收命令');
-    return this.beginRun('手动验证', { verifyOnly: true });
+    return this.beginRun(VERIFY_ONLY_TEXT, { verifyOnly: true });
   }
 
   detectAcceptance(): DetectedCommand[] {
@@ -331,6 +334,62 @@ export class AgentRuntime {
     return this.ledger.events(runId);
   }
 
+  // ---- 记忆管理 ----
+
+  setMemoryEnabled(enabled: boolean): void {
+    this.memoryEnabled = enabled;
+    this.emitSnapshot();
+  }
+
+  // 当前 Task 各仓库的记忆；有效性按此刻的工作区实时计算。
+  async listMemory(): Promise<MemoryItemView[]> {
+    const repos = await this.taskRepos(this.requireTask());
+    const items = this.memory.list([...repos.keys()]).slice(0, 300);
+    const anchors = this.memory.anchors(items.map(item => item.id));
+    const evaluations = new Map<string, Evaluation>();
+    for (const [repoId, repo] of repos) {
+      for (const [id, value] of await evaluate(repo, items.filter(item => item.repoId === repoId && item.status === 'active'), anchors)) evaluations.set(id, value);
+    }
+    return items.map(item => ({
+      id: item.id, kind: item.kind, text: item.text, status: item.status as 'active' | 'rejected', origin: item.origin, confirmed: item.confirmed, repoLabel: item.repoLabel,
+      taskId: item.taskId, taskTitle: this.tasks.find(task => task.id === item.taskId)?.title, paths: (anchors.get(item.id) ?? []).map(anchor => anchor.path),
+      validity: evaluations.get(item.id)?.validity ?? 'unverifiable', updatedAt: item.updatedAt,
+    }));
+  }
+
+  // 执行期间不改记忆：修改在下一个召回点（下一个 Run 的开始或下一次修复）起生效。
+  changeMemory(change: MemoryChange): void {
+    this.assertIdle();
+    if (change.action === 'edit') this.memory.edit(change.id, change.text);
+    else if (change.action === 'delete') this.memory.remove(change.id);
+    else this.memory.setStatus(change.id, change.action === 'reject' ? 'rejected' : 'active');
+    this.recordMemoryChange(change.action, change.id);
+  }
+
+  async addMemoryNote(text: string): Promise<void> {
+    this.assertIdle();
+    const task = this.requireTask();
+    const root = task.roots.find(item => item.primary && !item.missing);
+    if (!root) throw new Error('请先添加目录');
+    const repo = await repoOf(root);
+    const id = this.memory.save({ repoId: repo.id, repoLabel: repo.label, kind: 'note', text, signature: randomUUID(), origin: 'user', confirmed: true, taskId: task.id, evidence: {}, anchors: [] });
+    this.recordMemoryChange('note', id);
+  }
+
+  private recordMemoryChange(action: string, itemId: string): void {
+    const last = this.ledger.lastRun(this.requireTask().id);
+    if (last) this.ledger.appendEvent(last.id, 'memory.changed', { action, itemId });
+  }
+
+  private async taskRepos(task: TaskState): Promise<Map<string, RepoRef>> {
+    const repos = new Map<string, RepoRef>();
+    for (const root of task.roots.filter(item => !item.missing)) {
+      const repo = await repoOf(root);
+      if (!repos.has(repo.id)) repos.set(repo.id, repo);
+    }
+    return repos;
+  }
+
   // ---- 交付：报告与用户动作 ----
 
   async getDelivery(): Promise<DeliveryView> {
@@ -386,7 +445,7 @@ export class AgentRuntime {
     task.run = { id: run.id, taskId: task.id, phase: 'running', toolErrors: false };
     this.active = { id: run.id, kind: 'prompt', taskId: task.id, cancelRequested: false, verifyAbort: new AbortController() };
     if (options.verifyOnly) {
-      task.timeline.push({ kind: 'notice', id: randomUUID(), text: '手动验证' });
+      task.timeline.push({ kind: 'notice', id: randomUUID(), text: VERIFY_ONLY_TEXT });
     } else {
       if (!task.timeline.length) task.title = text.replace(/\s+/g, ' ').slice(0, 32);
       this.pushMessage(task, { text });
@@ -418,7 +477,12 @@ export class AgentRuntime {
       const first = options.verifyOnly ? undefined : await this.firstPrompt(task, text, resumedFrom);
       const buildPrompt = () => `${rules.text}\n\n${this.modeStatement(task)}\n\n${this.stateBlock(task)}`;
       let agent: Agent | undefined;
+      // 召回的历史记忆只存在于这个数组里：随每次请求插入到锚点消息之前，从不写入 Pi 会话。
+      const slots: Slot[] = [];
       if (first) {
+        const anchor = first.at(-1) as Extract<AgentMessage, { role: 'user' }>;
+        const recalled = await this.recallSlot(task, runId, 'start', `${task.title} ${text}`);
+        if (recalled) slots.push({ anchorTimestamp: anchor.timestamp, anchorText: text, text: recalled });
         const streamFn = this.streamFn(profile!);
         agent = new Agent({
           initialState: {
@@ -434,11 +498,13 @@ ${this.stateBlock(task)}`,
           convertToLlm,
           streamFn,
           toolExecution: 'sequential',
+          transformContext: async messages => injectSlots(messages, slots, slotText => userMessage(slotText)),
           beforeToolCall: (context, signal) => this.beforeToolCall(task, runId, context, signal),
           prepareRequest: async (request, signal) => {
             // 系统提示是对话记录开头的 system 消息，不在会话里；压缩后需要原样放回。
             const leading = request.context.messages.filter(message => message.role === 'system');
-            const outcome = await compactIfNeeded(task.session, request.model, this.apiKey, streamFn, Math.ceil(JSON.stringify(leading).length / 4), signal);
+            const slotTokens = slots.reduce((sum, slot) => sum + tokensOf(slot.text), 0);
+            const outcome = await compactIfNeeded(task.session, request.model, this.apiKey, streamFn, Math.ceil(JSON.stringify(leading).length / 4) + slotTokens, signal);
             if (!outcome) return undefined;
             this.recordCompaction(task, runId, outcome);
             return { context: { ...request.context, messages: [...leading, ...task.session.buildSessionContext().messages as AgentMessage[]] } };
@@ -447,7 +513,7 @@ ${this.stateBlock(task)}`,
         if (this.active?.id === runId) this.active.agent = agent;
         unsubscribe = agent.subscribe(event => this.onAgentEvent(task, runId, event));
       }
-      const end = await this.drive(task, runId, agent, first, options, startTrees, mutationsAtStart);
+      const end = await this.drive(task, runId, agent, first, options, startTrees, mutationsAtStart, slots);
       await this.endRun(task, runId, end.phase, end.stopReason, end.error);
     } catch (error) {
       if (this.active?.cancelRequested) await this.endRun(task, runId, 'cancelled', 'cancelled');
@@ -472,7 +538,7 @@ ${this.stateBlock(task)}`,
   // 提示 -> 验证 -> 修复；预算、无进展、取消、模型错误都会结束循环。
   private async drive(
     task: TaskState, runId: string, agent: Agent | undefined, first: AgentMessage[] | undefined, options: RunOptions,
-    startTrees: Map<string, string>, mutationsAtStart: Map<string, number>,
+    startTrees: Map<string, string>, mutationsAtStart: Map<string, number>, slots: Slot[],
   ): Promise<RunEnd> {
     let input = first;
     let previous: { hash: string; fingerprint: string } | undefined;
@@ -510,7 +576,10 @@ ${this.stateBlock(task)}`,
       this.ledger.appendEvent(runId, 'repair.requested', { attempt: attempt + 1, reason: failed.status, commandId: failed.commandId });
       this.setPhase(task, 'running', attempt + 1);
       this.pushMessage(task, { text: feedback, harness: true });
-      input = [userMessage(feedback)];
+      const message = userMessage(feedback);
+      const recalled = await this.recallSlot(task, runId, 'repair', task.title, { hash, outputTail: failed.outputTail });
+      if (recalled) slots.push({ anchorTimestamp: message.timestamp, anchorText: feedback, text: recalled });
+      input = [message];
     }
   }
 
@@ -812,7 +881,7 @@ ${this.stateBlock(task)}`,
     this.ledger.appendEvent(runId, 'tool.finished', {
       toolCallId, name: current?.name, state, runnerKind: runner,
       sandboxOutcome: runner === 'sandbox' ? 'enforced' : current?.name === 'powershell' ? 'not_sandboxed' : undefined,
-      exitCode, durationMs, outputPreview: output.slice(-OUTPUT_PREVIEW_LIMIT), fullOutputPath: details?.fullOutputPath,
+      exitCode, durationMs, errorClass: errorClassOf(state, runner, output), outputPreview: output.slice(-OUTPUT_PREVIEW_LIMIT), fullOutputPath: details?.fullOutputPath,
       structuredContent: structured, mcp: details?.mcp,
     });
     this.startedAt.delete(toolCallId);
@@ -861,6 +930,40 @@ ${this.stateBlock(task)}`,
     if (!task.run || task.run.phase === 'cancelling') return;
     task.run = { ...task.run, phase, attempt };
     this.emitRun(task);
+  }
+
+  // ---- 记忆召回 ----
+
+  // 取出与本次请求相关、且在当前代码上仍然有效的历史记忆，返回要发给模型的文本；召回失败不影响 Run。
+  private async recallSlot(task: TaskState, runId: string, point: 'start' | 'repair', query: string, failure?: Failure): Promise<string | undefined> {
+    if (!this.memoryEnabled) return undefined;
+    try {
+      const recalled = await recall(this.memory, { roots: task.roots.filter(root => !root.missing), query, changedPaths: await this.changedPaths(task), contextWindow: this.profile!.contextWindow, failure });
+      this.memory.recordUse(recalled.items.map(item => ({ runId, itemId: item.id, point, validity: item.validity, score: item.score, injected: item.injected })));
+      if (!recalled.text) return undefined;
+      const shown = recalled.items.filter(item => item.injected).map(item => {
+        const row = this.memory.get(item.id)!;
+        return { id: item.id, kind: item.kind, validity: item.validity, repoLabel: row.repoLabel, text: row.text };
+      });
+      this.ledger.appendEvent(runId, 'memory.recalled', { point, tokens: recalled.tokens, items: recalled.items, shown, text: recalled.text });
+      task.timeline.push({ kind: 'memory', id: randomUUID(), items: shown });
+      this.emitSnapshot();
+      return recalled.text;
+    } catch (error) {
+      this.ledger.appendEvent(runId, 'memory.recalled', { point, error: error instanceof Error ? error.message : String(error) });
+      return undefined;
+    }
+  }
+
+  private async changedPaths(task: TaskState): Promise<string[]> {
+    const paths: string[] = [];
+    for (const entry of task.deliveryView?.roots ?? []) {
+      const root = task.roots.find(item => item.id === entry.rootId);
+      if (!root?.git) continue;
+      const prefix = (await repoOf(root)).prefix;
+      paths.push(...entry.files.map(file => prefix + file.path));
+    }
+    return paths;
   }
 
   // ---- Compaction ----
@@ -1103,7 +1206,7 @@ ${this.stateBlock(task)}`,
   private load(task: TaskState): void {
     if (task.loaded) return;
     task.session = this.openSession(task);
-    const events = this.ledger.taskEvents(task.id, 'tool.requested', 'tool.finished', 'verification.finished');
+    const events = this.ledger.taskEvents(task.id, 'tool.requested', 'tool.finished', 'verification.finished', 'memory.recalled');
     task.timeline = rebuildTimeline(task.session, events, task.roots);
     task.loaded = true;
   }
@@ -1213,6 +1316,7 @@ ${this.stateBlock(task)}`,
       changes: task?.changes,
       acceptance: task?.acceptance ?? { commands: [], maxRepairs: DEFAULT_MAX_REPAIRS },
       delivery: task?.deliveryView,
+      memoryEnabled: this.memoryEnabled,
     });
   }
 
@@ -1227,13 +1331,22 @@ ${this.stateBlock(task)}`,
   }
 }
 
-function userMessage(text: string): AgentMessage {
+function userMessage(text: string): Extract<AgentMessage, { role: 'user' }> {
   return { role: 'user', content: [{ type: 'text', text }], timestamp: Date.now() };
 }
 
 function resultText(result: unknown): string {
   if (!result || typeof result !== 'object' || !('content' in result) || !Array.isArray(result.content)) return '';
   return result.content.filter(block => block?.type === 'text').map(block => block.text).join('');
+}
+
+// 评测需要按类别统计工具失败：用户拒绝、取消、超时、沙箱拒绝访问、其他工具错误。
+function errorClassOf(state: ToolItem['state'], runner: RunnerKind | undefined, output: string): string | undefined {
+  if (state === 'succeeded') return undefined;
+  if (state === 'denied' || state === 'cancelled') return state;
+  if (/timed out|timeout|超时/i.test(output)) return 'timeout';
+  if (runner === 'sandbox' && /access (is )?denied|拒绝访问/i.test(output)) return 'sandbox';
+  return 'tool_error';
 }
 
 function exitCodeOf(result: unknown): number | undefined {

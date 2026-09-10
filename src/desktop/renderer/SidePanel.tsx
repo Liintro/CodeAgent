@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import type { AppError, DeliveryActionResult, DetectedCommand, DiffView, RootDelivery, RootDeliveryState, VerifyCommand, WorkbenchSnapshot } from '../../shared/contracts';
+import { MemoryPanel } from './MemoryPanel';
 import { deliveryText } from './Sidebar';
 
-export type PanelTab = 'changes' | 'acceptance';
+export type PanelTab = 'changes' | 'acceptance' | 'memory';
 type Call = <T>(action: Promise<{ ok: true; value: T } | { ok: false; error: AppError }>) => Promise<T | undefined>;
 type Props = { tab: PanelTab; onTab: (tab: PanelTab) => void; view: WorkbenchSnapshot; active: boolean; call: Call; onClose: () => void };
 
@@ -11,13 +12,14 @@ const resultText = { passed: '通过', failed: '未通过', timeout: '超时', c
 
 export function SidePanel({ tab, onTab, view, active, call, onClose }: Props) {
   return (
-    <aside className="changes-panel" aria-label={tab === 'changes' ? '变更' : '验收'}>
+    <aside className="changes-panel" aria-label={{ changes: '变更', acceptance: '验收', memory: '记忆' }[tab]}>
       <div className="panel-tabs" role="tablist">
         <button role="tab" aria-selected={tab === 'changes'} onClick={() => onTab('changes')}>变更与交付</button>
         <button role="tab" aria-selected={tab === 'acceptance'} onClick={() => onTab('acceptance')}>验收</button>
+        <button role="tab" aria-selected={tab === 'memory'} onClick={() => onTab('memory')}>记忆</button>
         <button className="icon-button" aria-label="关闭面板" onClick={onClose}>×</button>
       </div>
-      {tab === 'changes' ? <ChangesPanel view={view} active={active} call={call} /> : <AcceptancePanel view={view} active={active} call={call} />}
+      {tab === 'changes' ? <ChangesPanel view={view} active={active} call={call} /> : tab === 'acceptance' ? <AcceptancePanel view={view} active={active} call={call} /> : <MemoryPanel view={view} active={active} call={call} />}
     </aside>
   );
 }

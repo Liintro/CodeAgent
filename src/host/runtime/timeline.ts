@@ -1,6 +1,6 @@
 import type { SessionManager } from '@earendil-works/pi-coding-agent';
 import { FEEDBACK_PREFIX, RECOVERY_PREFIX } from '../../shared/constants.js';
-import type { RootView, RunEvent, TimelineItem, ToolItem, ToolState } from '../../shared/contracts.js';
+import type { MemoryShown, RootView, RunEvent, TimelineItem, ToolItem, ToolState } from '../../shared/contracts.js';
 
 type Timed = { at: number; item: TimelineItem };
 
@@ -56,6 +56,9 @@ export function rebuildTimeline(session: SessionManager, events: RunEvent[], roo
     tool.runner = event.data.runnerKind as ToolItem['runner'];
   }
   for (const event of events) {
+    if (event.type === 'memory.recalled' && Array.isArray(event.data.shown) && event.data.shown.length) {
+      items.push({ at: event.at, item: { kind: 'memory', id: `${event.runId}-${event.seq}`, items: event.data.shown as MemoryShown[] } });
+    }
     if (event.type !== 'verification.finished') continue;
     const data = event.data;
     items.push({

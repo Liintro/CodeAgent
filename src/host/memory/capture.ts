@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { basename } from 'node:path';
+import { CONTINUE_TEXT, IMPLEMENT_PLAN_TEXT, VERIFY_ONLY_TEXT } from '../../shared/constants.js';
 import type { Acceptance, DeliveryView, RootDelivery, RootView, VerificationResult } from '../../shared/contracts.js';
 import type { Ledger } from '../runtime/ledger.js';
 import { failureHash } from '../runtime/verification.js';
@@ -54,11 +55,11 @@ function scrubDiff(diff: string): string {
  */
 export async function captureOutcome(store: MemoryStore, ledger: Ledger, task: CaptureTask, view: DeliveryView, runId: string, commitShas: Map<string, string>): Promise<{ id: string; kind: string }[]> {
   const items: NewMemory[] = [];
-  const goal = goalOf(ledger, task);
   for (const entry of view.roots) {
     const root = task.roots.find(item => item.id === entry.rootId);
     if (!root?.git || !isEligible(entry, task.acceptance)) continue;
     const repo = await repoOf(root);
+    const goal = goalOf(ledger, task, entry.rootId);
     const base = { repoId: repo.id, repoLabel: repo.label, origin: 'harness' as const, confirmed: false, taskId: task.id, runId, branch: entry.branch, baseCommit: entry.baseCommit, commitSha: commitShas.get(entry.rootId) };
     const passed = entry.verification.filter(result => result.status === 'passed');
     items.push(
@@ -157,9 +158,19 @@ async function anchorsBetween(repo: RepoRef, before: string, after: string, path
   return paths.map((path, index) => ({ path, preBlob: pre[index], postBlob: post[index] }));
 }
 
-function goalOf(ledger: Ledger, task: CaptureTask): string {
-  const started = ledger.taskEvents(task.id, 'run.started').map(event => String(event.data.userTextPreview ?? '')).find(text => text && text !== '手动验证');
-  return (started ?? task.title).replace(/\s+/g, ' ').slice(0, GOAL_LIMIT);
+// 目标取自第一个真正改动了该目录的 Run 的用户请求；“继续”“实施计划”“手动验证”这类通用文本不算。
+function goalOf(ledger: Ledger, task: CaptureTask, rootId: string): string {
+  const generic = new Set([CONTINUE_TEXT, IMPLEMENT_PLAN_TEXT, VERIFY_ONLY_TEXT]);
+  const runs = new Map<string, { text: string; start?: unknown; end?: unknown }>();
+  for (const event of ledger.taskEvents(task.id, 'run.started', 'git.snapshot')) {
+    const run = runs.get(event.runId) ?? { text: '' };
+    if (event.type === 'run.started') run.text = String(event.data.userTextPreview ?? '');
+    else if (event.data.rootId === rootId) run[event.data.kind === 'run_start' ? 'start' : 'end'] = event.data.tree;
+    runs.set(event.runId, run);
+  }
+  const usable = [...runs.values()].filter(run => run.text && !generic.has(run.text));
+  const text = usable.find(run => run.start && run.end && run.start !== run.end)?.text ?? usable[0]?.text ?? task.title;
+  return text.replace(/\s+/g, ' ').slice(0, GOAL_LIMIT);
 }
 
 function signature(kind: string, repoId: string, key: string): string {
