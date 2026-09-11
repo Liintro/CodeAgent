@@ -98,6 +98,18 @@ process.parentPort?.on('message', async ({ data }: { data: HostRequest }) => {
         case 'commitRoot':
           reply = ok(await runtime.commitRoot(command.rootId, command.message, command.confirmShared));
           break;
+        case 'listMemory':
+          reply = ok(await runtime.listMemory());
+          break;
+        case 'changeMemory':
+          reply = ok(runtime.changeMemory(command.change));
+          break;
+        case 'addMemoryNote':
+          reply = ok(await runtime.addMemoryNote(command.text));
+          break;
+        case 'setMemoryEnabled':
+          reply = ok(runtime.setMemoryEnabled(command.enabled));
+          break;
         case 'setMcpServers':
           reply = ok(await runtime.setMcpServers(command.servers));
           break;

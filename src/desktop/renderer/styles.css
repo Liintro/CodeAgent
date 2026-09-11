@@ -284,3 +284,16 @@ pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12.5
   .conversation, .composer-area { padding-inline: 16px; }
   .tool-card, .verification-card, .approval-card, .harness-note { margin-left: 0; }
 }
+
+.memory-add { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 10px; }
+.memory-add textarea { flex: 1; resize: vertical; }
+.memory-item { padding: 10px 0 12px; border-bottom: 1px solid var(--border); }
+.memory-item.rejected { opacity: 0.55; }
+.memory-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; }
+.memory-text { margin: 4px 0 8px; font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; }
+.delivery-chip.validity-current { color: var(--ok); background: var(--ok-soft); }
+.delivery-chip.validity-drifted, .delivery-chip.validity-unverifiable { color: var(--warn); background: var(--warn-soft); }
+.delivery-chip.validity-reverted, .delivery-chip.validity-not_in_history { color: var(--bad); background: var(--bad-soft); }
+.memory-note p { margin: 4px 0; line-height: 1.55; }
+.memory-add textarea, .memory-item { min-width: 0; }
+.memory-meta .tool-meta { white-space: normal; overflow-wrap: anywhere; }

@@ -5,7 +5,7 @@ import { safeStorage } from 'electron';
 import type { KeyChange, ModelInput, ModelProfile } from '../../shared/contracts.js';
 
 type StoredModel = ModelInput & { encryptedApiKey?: string };
-type Settings = { models: StoredModel[]; activeModelId?: string; recentRoots: string[]; sandboxGrants: string[] };
+type Settings = { models: StoredModel[]; activeModelId?: string; recentRoots: string[]; sandboxGrants: string[]; memoryEnabled?: boolean };
 
 export function validateModelInput(value: unknown): ModelInput {
   if (!value || typeof value !== 'object') throw new Error('模型配置无效');
@@ -62,6 +62,7 @@ export class SettingsStore {
           ? value.recentRoots.filter((item): item is string => typeof item === 'string')
           : typeof value.lastRootPath === 'string' ? [value.lastRootPath] : [],
         sandboxGrants: Array.isArray(value.sandboxGrants) ? value.sandboxGrants.filter((item): item is string => typeof item === 'string') : [],
+        memoryEnabled: value.memoryEnabled === false ? false : undefined,
       };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
@@ -131,6 +132,15 @@ export class SettingsStore {
     } catch {
       throw new Error('API Key 解密失败，请重新输入');
     }
+  }
+
+  get memoryEnabled(): boolean {
+    return this.settings.memoryEnabled !== false;
+  }
+
+  async setMemoryEnabled(enabled: boolean): Promise<void> {
+    this.settings = { ...this.settings, memoryEnabled: enabled };
+    await this.persist(this.settings);
   }
 
   get sandboxGrants(): string[] {

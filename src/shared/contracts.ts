@@ -89,9 +89,11 @@ export type VerificationItem = {
   outputTail: string;
   logFile?: string;
 };
+export type MemoryShown = { id: string; kind: MemoryKind; validity: MemoryValidity; repoLabel: string; text: string };
 export type TimelineItem =
   | { kind: 'message'; id: string; role: 'user' | 'assistant'; text: string; harness?: boolean }
   | { kind: 'notice'; id: string; text: string }
+  | { kind: 'memory'; id: string; items: MemoryShown[] }
   | VerificationItem
   | ToolItem;
 
@@ -178,10 +180,30 @@ export type RootDelivery = {
 export type DeliveryView = { taskId: string; state: Delivery; roots: RootDelivery[] };
 export type DeliveryActionResult = { rootId: string; skipped: string[]; commitSha?: string };
 
+export type MemoryKind = 'change' | 'fix' | 'convention' | 'note';
+export type MemoryValidity = 'current' | 'drifted' | 'reverted' | 'not_in_history' | 'unverifiable';
+
+export type MemoryItemView = {
+  id: string;
+  kind: MemoryKind;
+  text: string;
+  status: 'active' | 'rejected';
+  origin: 'harness' | 'user';
+  confirmed: boolean;
+  repoLabel: string;
+  taskId?: string;
+  taskTitle?: string;
+  paths: string[];
+  validity: MemoryValidity;
+  updatedAt: number;
+};
+export type MemoryChange = { id: string; action: 'reject' | 'restore' | 'delete' } | { id: string; action: 'edit'; text: string };
+
 export type RunEventType =
   | 'run.started' | 'git.snapshot' | 'tool.requested' | 'permission.decided' | 'tool.started'
   | 'tool.finished' | 'model.usage' | 'run.ended'
-  | 'verification.started' | 'verification.finished' | 'repair.requested' | 'compaction.done' | 'delivery.changed';
+  | 'verification.started' | 'verification.finished' | 'repair.requested' | 'compaction.done' | 'delivery.changed'
+  | 'memory.recalled' | 'memory.captured' | 'memory.capture_failed' | 'memory.changed';
 export type RunEvent = { runId: string; seq: number; at: number; type: RunEventType; data: Record<string, unknown> };
 
 export type WorkbenchSnapshot = {
@@ -201,6 +223,7 @@ export type WorkbenchSnapshot = {
   changes?: ChangesView;
   acceptance: Acceptance;
   delivery?: DeliveryView;
+  memoryEnabled: boolean;
 };
 
 export type Reply<T> = { ok: true; value: T } | { ok: false; error: AppError };
@@ -253,6 +276,10 @@ export interface DesktopBridge {
   acceptRoot(rootId: string): Promise<Reply<void>>;
   restoreRoot(rootId: string): Promise<Reply<DeliveryActionResult | null>>;
   commitRoot(rootId: string, message: string, confirmShared: boolean): Promise<Reply<DeliveryActionResult>>;
+  listMemory(): Promise<Reply<MemoryItemView[]>>;
+  changeMemory(change: MemoryChange): Promise<Reply<void>>;
+  addMemoryNote(text: string): Promise<Reply<void>>;
+  setMemoryEnabled(enabled: boolean): Promise<Reply<void>>;
   reloadMcp(): Promise<Reply<void>>;
   setMcpEnabled(name: string, enabled: boolean): Promise<Reply<void>>;
   openMcpConfig(): Promise<Reply<void>>;
@@ -284,6 +311,10 @@ export type HostCommand =
   | { type: 'acceptRoot'; rootId: string }
   | { type: 'restoreRoot'; rootId: string }
   | { type: 'commitRoot'; rootId: string; message: string; confirmShared: boolean }
+  | { type: 'listMemory' }
+  | { type: 'changeMemory'; change: MemoryChange }
+  | { type: 'addMemoryNote'; text: string }
+  | { type: 'setMemoryEnabled'; enabled: boolean }
   | { type: 'setMcpServers'; servers: McpServerDefinition[] }
   | { type: 'getRunEvents'; runId: string }
   | { type: 'getSnapshot' }

@@ -65,6 +65,21 @@ const MIGRATIONS = [`
     task_id TEXT NOT NULL REFERENCES task(id), root_id TEXT NOT NULL, state TEXT NOT NULL,
     base_tree TEXT, final_tree TEXT, base_commit TEXT, commit_sha TEXT, patch_file TEXT,
     report_file TEXT, updated_at INTEGER NOT NULL, PRIMARY KEY (task_id, root_id));
+`, `
+  CREATE TABLE memory_item (
+    id TEXT PRIMARY KEY, repo_id TEXT NOT NULL, repo_label TEXT NOT NULL, kind TEXT NOT NULL, text TEXT NOT NULL,
+    signature TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', origin TEXT NOT NULL, confirmed INTEGER NOT NULL DEFAULT 0,
+    task_id TEXT REFERENCES task(id), run_id TEXT REFERENCES run(id), branch TEXT, base_commit TEXT, commit_sha TEXT,
+    evidence_json TEXT NOT NULL DEFAULT '{}', hits INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+  CREATE UNIQUE INDEX memory_sig ON memory_item(repo_id, signature);
+  CREATE INDEX memory_repo ON memory_item(repo_id, status);
+  CREATE TABLE memory_anchor (
+    item_id TEXT NOT NULL REFERENCES memory_item(id) ON DELETE CASCADE, path TEXT NOT NULL, pre_blob TEXT, post_blob TEXT,
+    PRIMARY KEY (item_id, path));
+  CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED, text, paths, tokenize='trigram');
+  CREATE TABLE memory_use (
+    run_id TEXT NOT NULL REFERENCES run(id), item_id TEXT NOT NULL, point TEXT NOT NULL, validity TEXT NOT NULL,
+    score REAL NOT NULL, injected INTEGER NOT NULL, PRIMARY KEY (run_id, item_id, point));
 `];
 
 // 只记录事实（发生了什么）；对话内容由 Pi SessionManager 保存。
@@ -76,6 +91,11 @@ export class Ledger {
     this.db = new DatabaseSync(file);
     this.db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
     this.migrate();
+  }
+
+  /** 记忆表与账本在同一个数据库文件里；memory/store.ts 直接使用这个连接。 */
+  get database(): DatabaseSync {
+    return this.db;
   }
 
   get schemaVersion(): number {

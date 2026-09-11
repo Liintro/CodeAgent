@@ -17,6 +17,8 @@ import type {
   HostRequest,
   HostResponse,
   KeyChange,
+  MemoryChange,
+  MemoryItemView,
   ModelProfile,
   PermissionSetting,
   Reply,
@@ -54,7 +56,7 @@ if (process.env.CODEAGENT_TEST === '1') app.disableHardwareAcceleration();
 function emptySnapshot(hostState: WorkbenchSnapshot['host']): WorkbenchSnapshot {
   return {
     host: hostState, models: currentModels, model: currentModel, tasks: [], roots: [], sandboxStatus: 'untested', timeline: [], mcp: [], acceptance: { commands: [], maxRepairs: 3 },
-    permission: { userMode: 'manual', phase: 'act', approval: 'ask_writes_and_commands', scope: 'selected_roots', grants: [] },
+    permission: { userMode: 'manual', phase: 'act', approval: 'ask_writes_and_commands', scope: 'selected_roots', grants: [] }, memoryEnabled: true,
   };
 }
 
@@ -105,7 +107,13 @@ async function startHost(): Promise<Reply<void>> {
   const entry = fileURLToPath(new URL('../../host/index.js', import.meta.url));
   if (!existsSync(entry)) return { ok: false, error: { code: 'HOST_ENTRY_MISSING', message: '运行进程入口不存在', detail: entry } };
   log(`host_start entry=${entry} electron=${process.versions.electron} arch=${process.arch}`);
-  const child = utilityProcess.fork(entry, [], { stdio: 'pipe', serviceName: 'CodeAgent Agent Host' });
+  // Pi 的 grep/find 依赖 rg/fd：用随应用分发的固定版本，并使用应用自己的 Pi 目录且禁止联网下载，不读写用户的 ~/.pi。
+  const toolsDir = fileURLToPath(new URL('../../../../resources/generated/tools', import.meta.url));
+  const child = utilityProcess.fork(entry, [], {
+    stdio: 'pipe',
+    serviceName: 'CodeAgent Agent Host',
+    env: { ...process.env, PATH: `${toolsDir};${process.env.PATH ?? ''}`, PI_CODING_AGENT_DIR: join(app.getPath('userData'), 'pi-agent'), PI_OFFLINE: '1' },
+  });
   host = child;
   child.stdout?.on('data', () => undefined);
   child.stderr?.on('data', chunk => process.stderr.write(chunk));
@@ -159,6 +167,7 @@ async function startHost(): Promise<Reply<void>> {
     const configured = await applyModels();
     if (!configured.ok) return configured;
   }
+  await hostRequest<void>({ type: 'setMemoryEnabled', enabled: store.memoryEnabled });
   // 任务列表由 Host 从数据库恢复；只有全新安装（没有任何任务）才创建第一个任务。
   if (!(await hostSnapshot())?.tasks.length) await hostRequest<void>({ type: 'newTask', rootPaths: store.recentRoots });
   await persistRoots();
@@ -378,6 +387,23 @@ handle<DeliveryActionResult | null>('desktop:restoreRoot', async (rootId: unknow
 handle<DeliveryActionResult>('desktop:commitRoot', async (rootId: unknown, message: unknown, confirmShared: unknown) => {
   if (typeof rootId !== 'string' || typeof message !== 'string' || typeof confirmShared !== 'boolean') throw new Error('提交请求无效');
   return hostRequest<DeliveryActionResult>({ type: 'commitRoot', rootId, message, confirmShared }, 120000);
+});
+handle<MemoryItemView[]>('desktop:listMemory', async () => hostRequest<MemoryItemView[]>({ type: 'listMemory' }, 60000));
+handle<void>('desktop:changeMemory', async (change: unknown) => {
+  const value = change as Partial<MemoryChange> | undefined;
+  if (typeof value?.id !== 'string' || !['reject', 'restore', 'delete', 'edit'].includes(value.action ?? '')) throw new Error('记忆操作无效');
+  if (value.action === 'edit' && (typeof value.text !== 'string' || !value.text.trim())) throw new Error('记忆内容不能为空');
+  if (value.action === 'delete' && !await confirm('删除这条记忆？', '删除后无法恢复，Agent 之后也不会再看到它。', '删除')) return { ok: true, value: undefined };
+  return hostRequest<void>({ type: 'changeMemory', change: value.action === 'edit' ? { id: value.id, action: 'edit', text: value.text!.trim() } : { id: value.id, action: value.action as 'reject' | 'restore' | 'delete' } });
+});
+handle<void>('desktop:addMemoryNote', async (text: unknown) => {
+  if (typeof text !== 'string' || !text.trim()) throw new Error('备注内容不能为空');
+  return hostRequest<void>({ type: 'addMemoryNote', text: text.trim() });
+});
+handle<void>('desktop:setMemoryEnabled', async (enabled: unknown) => {
+  if (typeof enabled !== 'boolean') throw new Error('记忆开关无效');
+  await store.setMemoryEnabled(enabled);
+  return hostRequest<void>({ type: 'setMemoryEnabled', enabled });
 });
 handle<void>('desktop:reloadMcp', async () => {
   desktopError = undefined;
