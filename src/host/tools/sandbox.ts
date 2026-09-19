@@ -8,7 +8,7 @@ import type { PowerShellOperations } from '@earendil-works/pi-coding-agent';
 import type { SandboxStatus } from '../../shared/contracts.js';
 
 const UTF8_OUTPUT_PREFIX = 'try { [Console]::OutputEncoding=[System.Text.Encoding]::UTF8 } catch {}\n';
-// Everyone 与 RESTRICTED 是进程初始化所必需的限制 SID；写访问仍需同时被能力 SID 授权。
+// 控制台、NUL 等设备对象只向 Everyone 授予写权限，所以必须保留；它也会放行 Everyone 可写的文件，这部分由 helper 的 Low 完整性令牌拦截。
 const RESTRICTING_SIDS = ['S-1-1-0', 'S-1-5-12'];
 
 export class SandboxRunner {
@@ -22,7 +22,7 @@ export class SandboxRunner {
     this.capSid = `S-1-5-21-${parts.join('-')}`;
   }
 
-  // 真实自检：必须先证明同一用户能写到沙箱外，再证明受限进程及其子进程被操作系统拒绝。
+  // 真实自检：必须先证明同一用户能写到沙箱外（且该目录对 Everyone 可写），再证明受限进程及其子进程被操作系统拒绝。
   async verify(): Promise<SandboxStatus> {
     const base = await mkdtemp(join(tmpdir(), 'codeagent-sbx-'));
     try {
@@ -35,6 +35,7 @@ export class SandboxRunner {
       await mkdir(outside);
       await this.grant(root);
       await writeFile(join(outside, 'control.txt'), 'control');
+      await helper('icacls', [outside, '/grant', '*S-1-1-0:(OI)(CI)M']);
       const shell = findPowerShell();
       const attempt = (name: string) => `try { Set-Content -LiteralPath '${quote(join(outside, name))}' -Value x -ErrorAction Stop } catch {}`;
       const encodedChild = Buffer.from(attempt('child.txt'), 'utf16le').toString('base64');

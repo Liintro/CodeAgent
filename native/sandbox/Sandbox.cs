@@ -5,6 +5,10 @@
 // exits or when the --parent process (the Agent Host) exits, so a killed Host cannot leave a shell tree behind.
 //   grant  --cap <SID> --path <dir>
 //   revoke --cap <SID> --path <dir>
+// A restricted command runs at Low integrity. Everyone has to stay a restricting SID because device objects such as NUL
+// and the console grant write access only to Everyone, and that alone would also open every Everyone-writable file.
+// Mandatory integrity closes the gap: a Low token cannot write a file without a Low label, whatever its DACL says, so a
+// grant is the capability ACE plus an inheritable Low label, and revoke removes both.
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -24,7 +28,8 @@ static class Native
     public const int JobObjectExtendedLimitInformation = 9;
     public const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000;
     public const int STD_INPUT_HANDLE = -10, STD_OUTPUT_HANDLE = -11, STD_ERROR_HANDLE = -12;
-    public const int TokenDefaultDacl = 6;
+    public const int TokenDefaultDacl = 6, TokenIntegrityLevel = 25, SE_FILE_OBJECT = 1;
+    public const uint SE_GROUP_INTEGRITY = 0x20, LABEL_SECURITY_INFORMATION = 0x10;
 
     [StructLayout(LayoutKind.Sequential)] public struct SID_AND_ATTRIBUTES { public IntPtr Sid; public uint Attributes; }
     [StructLayout(LayoutKind.Sequential)] public struct TOKEN_DEFAULT_DACL { public IntPtr DefaultDacl; }
@@ -58,6 +63,11 @@ static class Native
     public static extern bool CreateRestrictedToken(IntPtr existing, uint flags, uint nDisable, IntPtr disable, uint nDelete, IntPtr delete, uint nRestrict, SID_AND_ATTRIBUTES[] restrict, out IntPtr newToken);
     [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)] public static extern bool ConvertStringSidToSid(string s, out IntPtr sid);
     [DllImport("advapi32.dll", SetLastError = true)] public static extern bool SetTokenInformation(IntPtr token, int cls, IntPtr info, int len);
+    [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    public static extern bool ConvertStringSecurityDescriptorToSecurityDescriptorW(string sddl, uint revision, out IntPtr sd, out uint size);
+    [DllImport("advapi32.dll", SetLastError = true)] public static extern bool GetSecurityDescriptorSacl(IntPtr sd, out bool present, out IntPtr sacl, out bool defaulted);
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode)]
+    public static extern uint SetNamedSecurityInfoW(string path, int type, uint info, IntPtr owner, IntPtr group, IntPtr dacl, IntPtr sacl);
     [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     public static extern bool CreateProcessAsUserW(IntPtr token, string app, StringBuilder cmd, IntPtr pa, IntPtr ta, bool inherit, uint flags, IntPtr env, string cwd, ref STARTUPINFO si, out PROCESS_INFORMATION pi);
     [DllImport("kernel32.dll")] public static extern IntPtr GetCurrentProcess();
@@ -111,14 +121,31 @@ static class Program
     {
         var sid = new SecurityIdentifier(One(o, "--cap"));
         string path = One(o, "--path");
+        const InheritanceFlags tree = InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit;
+        // Changing a label needs WRITE_OWNER, which an owner does not hold implicitly (on a typical E:\ tree only
+        // Authenticated Users: Modify applies). OWNER RIGHTS keeps the owner's implicit rights and adds just that.
+        var ownerRights = new SecurityIdentifier("S-1-3-4");
         var security = Directory.GetAccessControl(path, AccessControlSections.Access);
-        if (grant)
-            security.AddAccessRule(new FileSystemAccessRule(sid, FileSystemRights.Modify,
-                InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
-        else
-            security.PurgeAccessRules(sid);
+        security.AddAccessRule(new FileSystemAccessRule(ownerRights,
+            FileSystemRights.ReadPermissions | FileSystemRights.ChangePermissions | FileSystemRights.TakeOwnership, tree, PropagationFlags.None, AccessControlType.Allow));
+        if (grant) security.AddAccessRule(new FileSystemAccessRule(sid, FileSystemRights.Modify, tree, PropagationFlags.None, AccessControlType.Allow));
+        Directory.SetAccessControl(path, security);
+        SetLabel(path, grant ? "S:(ML;OICI;NW;;;LW)" : "S:");
+        if (grant) return 0;
+        security.PurgeAccessRules(sid);
+        security.PurgeAccessRules(ownerRights);
         Directory.SetAccessControl(path, security);
         return 0;
+    }
+
+    // Propagates through the existing tree: files already under a root become writable, and revoke clears them again.
+    static void SetLabel(string path, string sddl)
+    {
+        IntPtr sd, sacl; uint size; bool present, defaulted;
+        if (!Native.ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, 1, out sd, out size)) throw new Win32Exception();
+        if (!Native.GetSecurityDescriptorSacl(sd, out present, out sacl, out defaulted)) throw new Win32Exception();
+        uint error = Native.SetNamedSecurityInfoW(path, Native.SE_FILE_OBJECT, Native.LABEL_SECURITY_INFORMATION, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, sacl);
+        if (error != 0) throw new Win32Exception((int)error);
     }
 
     static IntPtr Sid(string text)
@@ -156,6 +183,11 @@ static class Program
             IntPtr aclMem = Marshal.AllocHGlobal(bin.Length); Marshal.Copy(bin, 0, aclMem, bin.Length);
             IntPtr info = Marshal.AllocHGlobal(IntPtr.Size); Marshal.WriteIntPtr(info, aclMem);
             if (!Native.SetTokenInformation(token, Native.TokenDefaultDacl, info, IntPtr.Size)) throw new Win32Exception();
+
+            var low = new Native.SID_AND_ATTRIBUTES { Sid = Sid("S-1-16-4096"), Attributes = Native.SE_GROUP_INTEGRITY };
+            int labelSize = Marshal.SizeOf(low);
+            IntPtr label = Marshal.AllocHGlobal(labelSize); Marshal.StructureToPtr(low, label, false);
+            if (!Native.SetTokenInformation(token, Native.TokenIntegrityLevel, label, labelSize)) throw new Win32Exception();
         }
 
         IntPtr job = Native.CreateJobObjectW(IntPtr.Zero, null);
