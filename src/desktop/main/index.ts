@@ -263,6 +263,11 @@ function validateAcceptance(value: unknown): Acceptance {
   return { commands, maxRepairs: input.maxRepairs! };
 }
 
+// 授权开始前先记下：Host 若在授权途中退出，下次启动的遗留清理也会覆盖这些目录；对从未授权的目录，撤销不改动任何内容。
+async function recordGrants(paths: string[]): Promise<void> {
+  if (paths.length) await store.saveRoots(store.recentRoots, [...new Set([...store.sandboxGrants, ...paths])]);
+}
+
 async function persistRoots(): Promise<void> {
   const snapshot = await hostSnapshot();
   if (!snapshot?.taskId) return;
@@ -284,6 +289,7 @@ handle<RootView | null>('desktop:addRoot', async () => {
   if (result.canceled || !result.filePaths[0]) return { ok: true, value: null };
   const grantSandbox = snapshot?.permission.userMode === 'auto';
   if (grantSandbox && !await confirmSandboxGrant([result.filePaths[0]])) return { ok: true, value: null };
+  if (grantSandbox) await recordGrants([result.filePaths[0]]);
   const added = await hostRequest<RootView>({ type: 'addRoot', path: result.filePaths[0], grantSandbox }, 120000);
   if (added.ok) {
     desktopError = undefined;
@@ -314,6 +320,7 @@ handle<PermissionSetting | null>('desktop:setPermission', async (userMode: unkno
   if (userMode === 'bypass' && !await confirmBypass()) return { ok: true, value: null };
   const ungranted = snapshot?.roots.filter(root => !root.sandboxGranted).map(root => root.path) ?? [];
   if (userMode === 'auto' && ungranted.length && !await confirmSandboxGrant(ungranted)) return { ok: true, value: null };
+  if (userMode === 'auto') await recordGrants(ungranted);
   const reply = await hostRequest<PermissionSetting | null>({ type: 'setPermission', userMode: userMode as UserMode }, 120000);
   await persistRoots();
   return reply;
