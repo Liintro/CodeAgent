@@ -89,15 +89,21 @@ type ActiveRun = {
   agent?: Agent;
   verifyAbort: AbortController;
   cancelRequested: boolean;
+  /** 下一次模型请求前无条件压缩一次（length 停止后的恢复）。 */
+  forceCompaction?: boolean;
   done?: Promise<unknown>;
 };
 type RunEnd = { phase: 'finished' | 'failed' | 'cancelled'; stopReason: string; error?: AppError };
+type PromptEnd = RunEnd & { retry?: 'transient' | 'length' };
 type RunOptions = { verifyOnly?: boolean; resumed?: boolean };
 type SandboxOptions = { exe: string; tempDir: string };
 
 const ARGS_TEXT_LIMIT = 4 * 1024;
 const APPROVAL_ARGS_LIMIT = 8 * 1024;
 const OUTPUT_PREVIEW_LIMIT = 8 * 1024;
+// 一次尝试内的模型请求恢复预算：瞬时错误按退避重试，length 停止压缩后重试一次；用尽后照常以错误结束 Run。
+export const MODEL_RETRY = { transientDelaysMs: [2000, 8000, 20000], lengthRetries: 1 };
+const TRANSIENT = /(?:408|409|425|429|500|502|503|504|529)|rate.?limit|overloaded|too busy|temporarily unavailable|ECONNRESET|ETIMEDOUT|ECONNREFUSED|EAI_AGAIN|socket hang up|fetch failed|network error|terminated/i;
 
 export class AgentRuntime {
   private profile?: ModelInput;
@@ -509,7 +515,9 @@ ${this.stateBlock(task)}`,
             // 系统提示是对话记录开头的 system 消息，不在会话里；压缩后需要原样放回。
             const leading = request.context.messages.filter(message => message.role === 'system');
             const slotTokens = slots.reduce((sum, slot) => sum + tokensOf(slot.text), 0);
-            const outcome = await compactIfNeeded(task.session, request.model, this.apiKey, streamFn, Math.ceil(JSON.stringify(leading).length / 4) + slotTokens, signal);
+            const force = this.active?.id === runId && this.active.forceCompaction === true;
+            if (force) this.active!.forceCompaction = false;
+            const outcome = await compactIfNeeded(task.session, request.model, this.apiKey, streamFn, Math.ceil(JSON.stringify(leading).length / 4) + slotTokens, signal, force);
             if (!outcome) return undefined;
             this.recordCompaction(task, runId, outcome);
             return { context: { ...request.context, messages: [...leading, ...task.session.buildSessionContext().messages as AgentMessage[]] } };
@@ -549,7 +557,7 @@ ${this.stateBlock(task)}`,
     let previous: { hash: string; fingerprint: string } | undefined;
     for (let attempt = 0; ; attempt++) {
       if (input) {
-        const ended = await this.promptOnce(agent!, input);
+        const ended = await this.promptWithRecovery(task, runId, agent!, input);
         if (ended) return ended;
       }
       if (task.permission.userMode === 'plan') return { phase: 'finished', stopReason: 'passed' };
@@ -588,8 +596,55 @@ ${this.stateBlock(task)}`,
     }
   }
 
-  private async promptOnce(agent: Agent, input: AgentMessage[]): Promise<RunEnd | undefined> {
-    const prompting = agent.prompt(input);
+  // 只重发失败的那一次模型请求：失败的 assistant 消息从 Agent 状态与会话分支中移除，然后从原有记录继续，
+  // 已完成的工具调用不会重放；取消随时生效，重试用尽后返回原来的错误。
+  private async promptWithRecovery(task: TaskState, runId: string, agent: Agent, input: AgentMessage[]): Promise<RunEnd | undefined> {
+    let ended = await this.promptOnce(agent, () => agent.prompt(input));
+    const used = { transient: 0, length: 0 };
+    while (ended?.retry) {
+      const kind = ended.retry;
+      const budget = kind === 'transient' ? MODEL_RETRY.transientDelaysMs.length : MODEL_RETRY.lengthRetries;
+      if (used[kind] >= budget) {
+        const { retry: _retry, ...terminal } = ended;
+        this.ledger.appendEvent(runId, 'model.retry', { kind, attempt: used[kind], exhausted: true, error: terminal.error });
+        return kind === 'transient' ? { ...terminal, error: { ...terminal.error!, message: `模型服务持续不可用（已重试 ${used[kind]} 次）` } } : terminal;
+      }
+      used[kind]++;
+      const delayMs = kind === 'transient' ? MODEL_RETRY.transientDelaysMs[used[kind] - 1] : 0;
+      this.dropFailedAssistant(task, agent);
+      this.ledger.appendEvent(runId, 'model.retry', { kind, attempt: used[kind], delayMs, error: ended.error });
+      task.timeline.push({ kind: 'notice', id: randomUUID(), text: kind === 'transient' ? `模型服务暂时不可用，${Math.round(delayMs / 1000)} 秒后重试（第 ${used[kind]} 次）` : '模型输出达到长度上限，压缩上下文后重试' });
+      this.emitSnapshot();
+      if (kind === 'length' && this.active?.id === runId) this.active.forceCompaction = true;
+      if (!await this.waitUnlessCancelled(delayMs)) return { phase: 'cancelled', stopReason: 'cancelled' };
+      ended = await this.promptOnce(agent, () => agent.continue());
+    }
+    return ended;
+  }
+
+  private dropFailedAssistant(task: TaskState, agent: Agent): void {
+    const last = agent.state.messages.at(-1);
+    if (last?.role === 'assistant') agent.state.messages = agent.state.messages.slice(0, -1);
+    const leaf = task.session.getLeafEntry();
+    if (leaf?.type === 'message' && leaf.message.role === 'assistant') {
+      if (leaf.parentId) task.session.branch(leaf.parentId);
+      else task.session.resetLeaf();
+    }
+  }
+
+  private async waitUnlessCancelled(ms: number): Promise<boolean> {
+    const signal = this.active?.verifyAbort.signal;
+    if (ms > 0 && signal && !signal.aborted) {
+      await new Promise<void>(done => {
+        const timer = setTimeout(done, ms);
+        signal.addEventListener('abort', () => { clearTimeout(timer); done(); }, { once: true });
+      });
+    }
+    return !this.active?.cancelRequested;
+  }
+
+  private async promptOnce(agent: Agent, start: () => Promise<void>): Promise<PromptEnd | undefined> {
+    const prompting = start();
     if (this.active?.cancelRequested) agent.abort();
     await prompting;
     await agent.waitForIdle();
@@ -597,9 +652,11 @@ ${this.stateBlock(task)}`,
     const stopReason = lastAssistant?.role === 'assistant' ? lastAssistant.stopReason : undefined;
     if (this.active?.cancelRequested || stopReason === 'aborted') return { phase: 'cancelled', stopReason: 'cancelled' };
     if (agent.state.errorMessage || stopReason === 'error') {
-      return { phase: 'failed', stopReason: 'agent_error', error: createError('MODEL_REQUEST_FAILED', '模型请求失败', agent.state.errorMessage || (lastAssistant?.role === 'assistant' ? lastAssistant.errorMessage : undefined), this.apiKey) };
+      const detail = agent.state.errorMessage || (lastAssistant?.role === 'assistant' ? lastAssistant.errorMessage : undefined);
+      const error = createError('MODEL_REQUEST_FAILED', '模型请求失败', detail, this.apiKey);
+      return { phase: 'failed', stopReason: 'agent_error', error, ...(TRANSIENT.test(detail ?? '') ? { retry: 'transient' as const } : {}) };
     }
-    if (stopReason === 'length') return { phase: 'failed', stopReason: 'agent_error', error: createError('OUTPUT_LENGTH_LIMIT', '已达到输出长度限制', undefined, this.apiKey) };
+    if (stopReason === 'length') return { phase: 'failed', stopReason: 'agent_error', error: createError('OUTPUT_LENGTH_LIMIT', '已达到输出长度限制', undefined, this.apiKey), retry: 'length' };
     return undefined;
   }
 
