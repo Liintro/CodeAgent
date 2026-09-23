@@ -52,7 +52,11 @@ export type Delivery = 'none' | 'unverified' | 'verifying' | 'verified' | 'verif
 export type RootDeliveryState = 'none' | 'unverified' | 'verified' | 'verification_failed' | 'accepted' | 'restored' | 'committed';
 
 export type VerifyCommand = { id: string; rootId: string; label: string; command: string; timeoutSeconds: number };
-export type DetectedCommand = VerifyCommand & { missing?: string };
+/** toolchain：检测到的工具版本；problem：缺少或不兼容的工具链（命令照常列出，但需要用户先解决）。 */
+export type DetectedCommand = VerifyCommand & { adapter: string; toolchain?: string; problem?: string };
+export type Diagnostic = { file: string; line: number; col?: number; severity: 'error' | 'warning'; code?: string; message: string };
+/** 从真实工具输出中解析出的失败测试与编译诊断。 */
+export type ParsedFailure = { tests: string[]; diagnostics: Diagnostic[] };
 export type Acceptance = { commands: VerifyCommand[]; maxRepairs: number };
 
 export type TaskSummary = { id: string; title: string; updatedAt: number; delivery: Delivery; interrupted: boolean };
@@ -88,6 +92,7 @@ export type VerificationItem = {
   durationMs?: number;
   outputTail: string;
   logFile?: string;
+  failure?: ParsedFailure;
 };
 export type MemoryShown = { id: string; kind: MemoryKind; validity: MemoryValidity; repoLabel: string; text: string };
 export type TimelineItem =
@@ -154,6 +159,7 @@ export type VerificationResult = {
   logFile?: string;
   outputTail: string;
   treeAtStart?: string;
+  failure?: ParsedFailure;
 };
 
 export type RootDelivery = {

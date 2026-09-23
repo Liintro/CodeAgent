@@ -208,7 +208,7 @@ function AcceptancePanel({ view, active, call }: { view: WorkbenchSnapshot; acti
           {suggestions.map(item => (
             <div key={item.id} className="suggestion">
               <span>{view.roots.find(root => root.id === item.rootId)?.alias} · <code>{item.command}</code></span>
-              {item.missing && <small className="warn-text">未在 PATH 中找到 {item.missing}</small>}
+              {item.problem ? <small className="warn-text">{item.problem}</small> : item.toolchain && <small>{item.toolchain}</small>}
               <button className="text-button" onClick={() => add({ id: item.id, rootId: item.rootId, label: item.label, command: item.command, timeoutSeconds: item.timeoutSeconds })}>添加</button>
             </div>
           ))}

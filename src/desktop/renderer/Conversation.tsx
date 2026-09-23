@@ -145,8 +145,14 @@ const VerificationCard = memo(function VerificationCard({ item }: { item: Verifi
         {item.durationMs !== undefined && <span className="tool-meta">{formatDuration(item.durationMs)}</span>}
         <span className={`state-chip ${item.state === 'passed' ? 'succeeded' : item.state === 'running' ? 'running' : 'failed'}`}>{verificationText[item.state]}</span>
       </div>
+      {item.failure && (
+        <ul className="failure-list" aria-label="解析出的失败">
+          {item.failure.tests.map(name => <li key={`t:${name}`}>测试 <code>{name}</code></li>)}
+          {item.failure.diagnostics.map((entry, index) => <li key={`d:${index}`}><code>{entry.file}:{entry.line}</code> {entry.message}</li>)}
+        </ul>
+      )}
       {item.state !== 'running' && item.outputTail && (
-        <details className="tool-output" open={item.state !== 'passed'}>
+        <details className="tool-output" open={item.state !== 'passed' && !item.failure}>
           <summary>{item.exitCode !== undefined ? `退出码 ${item.exitCode} · ` : ''}输出末尾{item.logFile ? '（完整日志已保存）' : ''}</summary>
           <pre>{item.outputTail}</pre>
         </details>

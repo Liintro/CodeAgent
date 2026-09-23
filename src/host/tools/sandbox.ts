@@ -129,11 +129,11 @@ export class SandboxRunner {
     const common = ['--parent', String(process.pid), '--cwd', cwd, '--cmdline', cmdline];
     if (direct) return spawn(this.exe, ['run', '--mode', 'direct', ...common], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env });
     const restricting = RESTRICTING_SIDS.flatMap(sid => ['--extra-restrict', sid]);
-    // PowerShell 在 TEMP 不可写时会静默降级为 ConstrainedLanguage，因此必须指向已授权目录；uv 的缓存同理。
+    // PowerShell 在 TEMP 不可写时会静默降级为 ConstrainedLanguage，因此必须指向已授权目录；uv 与 Go 的构建缓存同理。
     return spawn(this.exe, ['run', '--cap', this.capSid, ...restricting, ...common], {
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
-      env: { ...env, TEMP: this.tempDir, TMP: this.tempDir, UV_CACHE_DIR: join(this.tempDir, 'uv-cache') },
+      env: { ...env, TEMP: this.tempDir, TMP: this.tempDir, UV_CACHE_DIR: join(this.tempDir, 'uv-cache'), GOCACHE: join(this.tempDir, 'go-build') },
     });
   }
 }

@@ -1,11 +1,11 @@
 import { createHash } from 'node:crypto';
-import { existsSync, readdirSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { delimiter, join } from 'node:path';
+import { join } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import type { PowerShellOperations } from '@earendil-works/pi-coding-agent';
 import { FEEDBACK_PREFIX } from '../../shared/constants.js';
-import type { DetectedCommand, RootView, VerificationResult, VerifyCommand } from '../../shared/contracts.js';
+import type { ParsedFailure, RootView, VerificationResult, VerifyCommand } from '../../shared/contracts.js';
+import { parseFailure, sandboxBlocked } from '../engineering/index.js';
 
 type Exec = PowerShellOperations['exec'];
 
@@ -13,44 +13,11 @@ const LOG_CAP = 5 * 1024 * 1024;
 const TAIL_LINES = 200;
 const TAIL_BYTES = 16 * 1024;
 
-// 只做文件存在性检测；建议命令由用户在验收面板确认后才会执行。
-export function detectCommands(root: RootView): DetectedCommand[] {
-  const has = (name: string) => existsSync(join(root.path, name));
-  const found: { label: string; command: string; executable: string; timeoutSeconds: number }[] = [];
-  if (has('pom.xml')) {
-    const wrapper = has('mvnw.cmd');
-    found.push({ label: 'Maven 测试', command: wrapper ? '.\\mvnw.cmd test' : 'mvn test', executable: wrapper ? '' : 'mvn', timeoutSeconds: 900 });
-  }
-  if (has('build.gradle') || has('build.gradle.kts')) {
-    const wrapper = has('gradlew.bat');
-    found.push({ label: 'Gradle 测试', command: wrapper ? '.\\gradlew.bat test' : 'gradle test', executable: wrapper ? '' : 'gradle', timeoutSeconds: 900 });
-  }
-  if (has('pyproject.toml') || has('pytest.ini') || hasPythonTests(root.path)) {
-    const uv = has('uv.lock');
-    found.push({ label: 'pytest 测试', command: uv ? 'uv run pytest' : 'python -m pytest', executable: uv ? 'uv' : 'python', timeoutSeconds: 600 });
-  }
-  return found.map(({ executable, ...item }, index) => ({
-    ...item,
-    id: `${root.id}-${index + 1}`,
-    rootId: root.id,
-    missing: executable && !onPath(executable) ? executable : undefined,
-  }));
-}
-
-function hasPythonTests(rootPath: string): boolean {
-  const tests = join(rootPath, 'tests');
-  return existsSync(tests) && readdirSync(tests).some(name => name.endsWith('.py'));
-}
-
-function onPath(executable: string): boolean {
-  const extensions = ['.exe', '.cmd', '.bat'];
-  return (process.env.PATH ?? '').split(delimiter).some(directory => directory && extensions.some(extension => existsSync(join(directory, executable + extension))));
-}
-
 export type VerifyContext = {
   evidenceDir: string;
   attempt: number;
   exec: Exec;
+  sandboxed: boolean;
   signal?: AbortSignal;
   onStart: (command: VerifyCommand, root: RootView) => void;
   onFinish: (result: VerificationResult, root: RootView) => void;
@@ -90,10 +57,20 @@ async function runCommand(ctx: VerifyContext, root: RootView, command: VerifyCom
       capture.push(Buffer.from(message));
     }
   }
-  const output = capture.text();
+  let output = capture.text();
+  const blocked = status === 'failed' && ctx.sandboxed ? sandboxBlocked(output) : undefined;
+  if (blocked) {
+    status = 'unavailable';
+    output += `
+${blocked}`;
+  }
   const logFile = join(ctx.evidenceDir, `verify-${ctx.attempt}-${command.id}.log`);
   await writeFile(logFile, output, 'utf8');
-  return { commandId: command.id, rootId: root.id, label: command.label, command: command.command, attempt: ctx.attempt, status, exitCode, durationMs: Date.now() - started, logFile, outputTail: tail(output), treeAtStart: tree };
+  const failure = status === 'failed' || status === 'timeout' ? parseFailure(output, root.path) : undefined;
+  return {
+    commandId: command.id, rootId: root.id, label: command.label, command: command.command, attempt: ctx.attempt, status, exitCode, durationMs: Date.now() - started, logFile, outputTail: tail(output), treeAtStart: tree,
+    ...(failure && (failure.tests.length || failure.diagnostics.length) ? { failure } : {}),
+  };
 }
 
 // 日志保留开头与结尾，中间超限部分以标记替代。
@@ -126,8 +103,13 @@ export function tail(output: string): string {
   return text.length > TAIL_BYTES ? text.slice(-TAIL_BYTES) : text;
 }
 
-// 比较两次失败是否相同：只看带失败标记的行（编译进度等信息行首次与增量构建不同），并去掉耗时与时间戳。
+// 比较两次失败是否相同：能解析出失败测试与诊断时只比较它们的身份（行号会随编辑移动，不计入）；
+// 否则只看带失败标记的行（编译进度等信息行首次与增量构建不同），并去掉耗时与时间戳。
 export function failureHash(result: VerificationResult): string {
+  if (result.failure) {
+    const identity = [...result.failure.tests, ...result.failure.diagnostics.map(item => `${item.file}:${item.code ?? ''}:${item.message}`)].sort().join('\n');
+    return createHash('sha1').update(`${result.status}:${result.exitCode}:parsed:${identity}`).digest('hex');
+  }
   const lines = result.outputTail.split('\n').filter(line => /error|fail|exception|assert|expected|traceback/i.test(line));
   const normalized = (lines.length ? lines.join('\n') : result.outputTail)
     .replace(/\d{4}-\d\d-\d\d[T ][\d:.+Z-]+/g, '')
@@ -142,10 +124,22 @@ export function feedbackMessage(result: VerificationResult, rootAlias: string, a
     `目录：${rootAlias}`,
     `命令：${result.command}`,
     `结果：${outcome}`,
+    ...failureLines(result.failure),
     '输出（末尾部分）：',
     '```',
     result.outputTail,
     '```',
     '请修复导致失败的源码原因。不要修改验收命令；除非任务明确要求，不要为了通过验证而修改测试、删除测试或放宽断言。',
   ].join('\n');
+}
+
+function failureLines(failure?: ParsedFailure): string[] {
+  if (!failure) return [];
+  const lines: string[] = [];
+  if (failure.tests.length) lines.push(`失败的测试（${failure.tests.length}）：`, ...failure.tests.map(name => `- ${name}`));
+  if (failure.diagnostics.length) {
+    lines.push(`编译与运行诊断（${failure.diagnostics.length}）：`);
+    lines.push(...failure.diagnostics.map(item => `- ${item.file}:${item.line}${item.col ? `:${item.col}` : ''} ${item.severity === 'warning' ? '警告' : '错误'}${item.code ? ` ${item.code}` : ''}：${item.message}`));
+  }
+  return lines;
 }

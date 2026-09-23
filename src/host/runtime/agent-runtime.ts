@@ -59,7 +59,8 @@ import { compactIfNeeded, type CompactionOutcome } from './compaction.js';
 import { Ledger, type TaskRecord } from './ledger.js';
 import { recoveryBrief, repairDanglingToolCalls, unknownCalls, type RootRecovery } from './recovery.js';
 import { rebuildTimeline } from './timeline.js';
-import { detectCommands, failureHash, feedbackMessage, verifyRoots } from './verification.js';
+import { detectCommands } from '../engineering/index.js';
+import { failureHash, feedbackMessage, verifyRoots } from './verification.js';
 
 type TaskState = {
   id: string;
@@ -272,8 +273,12 @@ export class AgentRuntime {
     return this.beginRun(VERIFY_ONLY_TEXT, { verifyOnly: true });
   }
 
-  detectAcceptance(): DetectedCommand[] {
-    return this.requireTask().roots.filter(root => !root.missing).flatMap(root => detectCommands(root));
+  async detectAcceptance(): Promise<DetectedCommand[]> {
+    const found: DetectedCommand[] = [];
+    const task = this.requireTask();
+    const sandboxed = task.permission.userMode === 'auto';
+    for (const root of task.roots.filter(item => !item.missing)) found.push(...await detectCommands(root, sandboxed));
+    return found;
   }
 
   setAcceptance(acceptance: Acceptance): void {
@@ -611,7 +616,7 @@ ${this.stateBlock(task)}`,
     const itemId = (commandId: string) => `${runId}-${attempt}-${commandId}`;
     return verifyRoots(
       {
-        evidenceDir: join(this.evidenceRoot(), task.id, runId), attempt, exec, signal: this.active?.verifyAbort.signal,
+        evidenceDir: join(this.evidenceRoot(), task.id, runId), attempt, exec, sandboxed, signal: this.active?.verifyAbort.signal,
         onStart: (command, root) => {
           this.ledger.appendEvent(runId, 'verification.started', { attempt, commandId: command.id, label: command.label, command: command.command, rootId: root.id, runnerKind: sandboxed ? 'sandbox' : 'direct' });
           this.upsertVerification(task, { kind: 'verification', id: itemId(command.id), attempt, rootAlias: root.alias, commandLabel: command.label, command: command.command, state: 'running', outputTail: '' });
@@ -620,7 +625,7 @@ ${this.stateBlock(task)}`,
           this.ledger.appendEvent(runId, 'verification.finished', { ...result });
           this.upsertVerification(task, {
             kind: 'verification', id: itemId(result.commandId), attempt, rootAlias: root.alias, commandLabel: result.label, command: result.command,
-            state: result.status, exitCode: result.exitCode, durationMs: result.durationMs, outputTail: result.outputTail, logFile: result.logFile,
+            state: result.status, exitCode: result.exitCode, durationMs: result.durationMs, outputTail: result.outputTail, logFile: result.logFile, failure: result.failure,
           });
         },
       },
