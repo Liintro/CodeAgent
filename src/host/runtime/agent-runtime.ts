@@ -19,6 +19,7 @@ import {
   type DeliveryView,
   type DetectedCommand,
   type DiffView,
+  type DocumentView,
   type MemoryChange,
   type MemoryItemView,
   type McpServerDefinition,
@@ -43,6 +44,7 @@ import {
   type WorkbenchSnapshot,
 } from '../../shared/contracts.js';
 import { CONTINUE_TEXT, DEFAULT_MAX_REPAIRS, IMPLEMENT_PLAN_TEXT, VERIFY_ONLY_TEXT } from '../../shared/constants.js';
+import { createDocumentTools, DocumentLibrary, type DocumentRecord } from '../documents/index.js';
 import { captureOutcome } from '../memory/capture.js';
 import { injectSlots, recall, tokensOf, type Failure, type Slot } from '../memory/recall.js';
 import { repoOf, type RepoRef } from '../memory/repo.js';
@@ -68,6 +70,8 @@ type TaskState = {
   createdAt: number;
   updatedAt: number;
   roots: RootView[];
+  /** 只读的任务文档（可在工作目录之外）。 */
+  documents: DocumentRecord[];
   permission: PermissionSetting;
   acceptance: Acceptance;
   delivery: Delivery;
@@ -124,6 +128,7 @@ export class AgentRuntime {
   private readonly sandbox?: SandboxRunner;
   private readonly runners = new Map<string, RunnerKind>();
   private readonly startedAt = new Map<string, number>();
+  private readonly library: DocumentLibrary;
 
   // 未提供 dataDir 时（Batch 1/2 的运行时测试）账本与会话都只在内存中。
   constructor(
@@ -135,6 +140,7 @@ export class AgentRuntime {
   ) {
     this.ledger = new Ledger(dataDir ? join(dataDir, 'data', 'tasks.sqlite') : ':memory:');
     this.memory = new MemoryStore(this.ledger.database);
+    this.library = new DocumentLibrary(dataDir ? join(dataDir, 'docs') : undefined);
     this.mcp = new McpManager(() => this.emit({ type: 'mcp.updated', value: this.mcp.statuses() }));
     if (sandbox) {
       this.sandbox = new SandboxRunner(sandbox.exe, sandbox.tempDir);
@@ -228,6 +234,29 @@ export class AgentRuntime {
     if (root.sandboxGranted && !this.tasks.some(item => item.roots.some(other => other.path === root.path && other.sandboxGranted))) {
       await this.sandbox?.revoke(root.path).catch(() => undefined);
     }
+  }
+
+  async addDocument(path: string): Promise<DocumentView> {
+    this.assertIdle();
+    const task = this.ensureTask();
+    const record = await this.library.inspect(path);
+    if (task.documents.some(doc => doc.sha256 === record.sha256)) throw new Error('该文档已在任务中');
+    if (task.documents.some(doc => doc.name === record.name)) throw new Error(`任务中已有同名文档：${record.name}`);
+    task.documents.push(record);
+    this.ledger.saveDocuments(task.id, task.documents);
+    this.save(task);
+    this.emitSnapshot();
+    return documentView(record);
+  }
+
+  removeDocument(documentId: string): void {
+    this.assertIdle();
+    const task = this.requireTask();
+    if (!task.documents.some(doc => doc.id === documentId)) throw new Error('文档不存在');
+    task.documents = task.documents.filter(doc => doc.id !== documentId);
+    this.ledger.saveDocuments(task.id, task.documents);
+    this.save(task);
+    this.emitSnapshot();
   }
 
   setPrimaryRoot(rootId: string): void {
@@ -770,7 +799,17 @@ ${this.stateBlock(task)}`,
 
   private buildTools(task: TaskState) {
     const mode = task.permission.userMode;
-    if (!task.roots.length) return [];
+    const documentTools = task.documents.length ? createDocumentTools({
+      documents: () => task.documents,
+      library: this.library,
+      onStarted: toolCallId => this.markToolRunning(task, toolCallId),
+      vision: this.profile?.vision === true,
+      onChanged: record => {
+        task.documents = task.documents.map(doc => doc.id === record.id ? record : doc);
+        this.ledger.saveDocuments(task.id, task.documents);
+      },
+    }) : [];
+    if (!task.roots.length) return documentTools;
     const trusted = this.trustedMcpNames();
     const mcpTools = this.mcp.tools().filter(tool => registered(mode, classify(tool.name, trusted)));
     return [
@@ -780,9 +819,11 @@ ${this.stateBlock(task)}`,
         sandbox: this.sandbox,
         includeEdit: mode !== 'plan',
         includeShell: mode !== 'plan',
+        vision: this.profile?.vision === true,
         onStarted: (toolCallId, root) => this.markToolRunning(task, toolCallId, root),
         runnerOf: toolCallId => this.runners.get(toolCallId) ?? 'direct',
       }),
+      ...documentTools,
       ...mcpTools.map(tool => ({
         ...tool,
         execute: (toolCallId: string, params: any, signal?: AbortSignal, onUpdate?: any) => {
@@ -900,7 +941,8 @@ ${this.stateBlock(task)}`,
       const binding = this.mcp.bindings.get(event.toolName);
       const item: ToolItem = {
         kind: 'tool', toolCallId: event.toolCallId, name: event.toolName, args: event.args, state: 'requested', output: '',
-        ...(binding ? {} : { rootId: root?.id, rootAlias: root?.alias, cwd: root?.path }),
+        // MCP 与任务文档工具不属于任何工作目录。
+        ...(binding || event.toolName.startsWith('doc_') ? {} : { rootId: root?.id, rootAlias: root?.alias, cwd: root?.path }),
         source: binding ? { mcpServer: binding.server, tool: binding.tool } : undefined,
       };
       task.timeline.push(item);
@@ -1043,6 +1085,10 @@ ${this.stateBlock(task)}`,
     const lines = ['## 任务状态（由系统生成）'];
     const commands = task.acceptance.commands.map(command => `- ${task.roots.find(root => root.id === command.rootId)?.alias ?? command.rootId}：${command.command}`);
     lines.push(commands.length ? `验收命令（用户已确认，不得修改）：\n${commands.join('\n')}` : '验收命令：未设置');
+    if (task.documents.length) {
+      lines.push(`任务文档（只读；用 doc_outline 查看结构、doc_read 读取页或章节；实现与回答时按 【文档 p.N】 或 【文档 §章节】 引用依据${this.profile?.vision ? '；文本不足以确定的图、表、扫描页才用 doc_view 查看图像' : '；当前模型不支持图像输入，图片与扫描页的内容无法解读，遇到时如实说明'}）：`);
+      for (const doc of task.documents) lines.push(`- ${doc.name}（${doc.kind}，${doc.kind === 'pdf' ? `${doc.pages} 页` : `${doc.sections} 个章节`}${doc.noTextLayerPages.length ? `，第 ${doc.noTextLayerPages.join('、')} 页没有文本层` : ''}）`);
+    }
     for (const entry of task.deliveryView?.roots ?? []) {
       const last = entry.verification.map(result => `${result.label}${result.status === 'passed' ? '通过' : `未通过（退出码 ${result.exitCode ?? '无'}）`}`).join('、');
       lines.push(`目录 ${entry.alias}：交付状态 ${entry.state}${last ? `；当前代码上的验证：${last}` : ''}`);
@@ -1123,7 +1169,24 @@ ${this.stateBlock(task)}`,
 
   private deliveryInput(task: TaskState): delivery.DeliveryInput {
     const verifications = this.ledger.taskEvents(task.id, 'verification.finished').map(event => event.data as unknown as VerificationResult);
-    return { taskId: task.id, roots: task.roots.filter(root => !root.missing), ledger: this.ledger, acceptance: task.acceptance, verifications, mutations: task.mutations };
+    return { taskId: task.id, roots: task.roots.filter(root => !root.missing), ledger: this.ledger, acceptance: task.acceptance, verifications, mutations: task.mutations, documents: this.citations(task) };
+  }
+
+  // 交付报告里的文档引用：Agent 通过 doc_read 实际读取过的页、章节与查询。
+  private citations(task: TaskState): DeliveryInputDocuments {
+    const calls = this.ledger.taskEvents(task.id, 'tool.requested').map(event => event.data).filter(data => data.name === 'doc_read' || data.name === 'doc_outline');
+    return task.documents.map(doc => {
+      const refs = new Set<string>();
+      for (const call of calls) {
+        let args: { document?: string; refs?: unknown; query?: unknown } = {};
+        try { args = JSON.parse(String(call.argsText)); } catch { continue; }
+        if (args.document !== doc.name && args.document !== doc.id) continue;
+        if (call.name === 'doc_outline') refs.add('outline');
+        else if (typeof args.query === 'string') refs.add(`query:${args.query}`);
+        else for (const ref of Array.isArray(args.refs) && args.refs.length ? args.refs : ['全文']) refs.add(String(ref));
+      }
+      return { name: doc.name, kind: doc.kind, sha256: doc.sha256, citations: [...refs] };
+    });
   }
 
   // 只读刷新：计算当前交付视图（含验证是否仍然有效），不改动数据库中的交付行。
@@ -1258,6 +1321,7 @@ ${this.stateBlock(task)}`,
     return {
       id: record.id, title: record.title, createdAt: record.createdAt, updatedAt: record.updatedAt,
       roots: record.roots.map((root, index) => ({ id: root.id, alias: root.alias, path: root.path, primary: index === 0, sandboxGranted: false })),
+      documents: this.ledger.documents(record.id),
       permission: permissionFor(record.userMode, record.grants), acceptance: record.acceptance, delivery: record.delivery, mutations,
       interrupted: last?.phase === 'interrupted', loaded: false, session: undefined as never, timeline: [],
       run: last && { id: last.id, taskId: record.id, phase: last.phase, toolErrors: false },
@@ -1305,7 +1369,7 @@ ${this.stateBlock(task)}`,
       provider: 'codeagent',
       baseUrl: profile.baseUrl,
       reasoning: false,
-      input: ['text'],
+      input: profile.vision ? ['text', 'image'] : ['text'],
       contextWindow: profile.contextWindow,
       maxTokens: profile.maxOutputTokens,
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -1315,7 +1379,7 @@ ${this.stateBlock(task)}`,
   private createTask(roots: RootView[]): TaskState {
     if (roots.length) roots[0].primary = true;
     const task: TaskState = {
-      id: randomUUID(), title: '新任务', createdAt: Date.now(), updatedAt: Date.now(), roots, permission: permissionFor('manual'),
+      id: randomUUID(), title: '新任务', createdAt: Date.now(), updatedAt: Date.now(), roots, documents: [], permission: permissionFor('manual'),
       acceptance: { commands: [], maxRepairs: DEFAULT_MAX_REPAIRS }, delivery: 'none', mutations: new Map(), interrupted: false, loaded: true,
       session: undefined as never, timeline: [],
     };
@@ -1379,6 +1443,7 @@ ${this.stateBlock(task)}`,
       acceptance: task?.acceptance ?? { commands: [], maxRepairs: DEFAULT_MAX_REPAIRS },
       delivery: task?.deliveryView,
       memoryEnabled: this.memoryEnabled,
+      documents: task?.documents.map(documentView) ?? [],
     });
   }
 
@@ -1391,6 +1456,12 @@ ${this.stateBlock(task)}`,
       payload: structuredClone(payload),
     });
   }
+}
+
+type DeliveryInputDocuments = delivery.DeliveryInput['documents'];
+
+function documentView({ mtimeMs: _mtime, size: _size, ...view }: DocumentRecord): DocumentView {
+  return view;
 }
 
 function userMessage(text: string): Extract<AgentMessage, { role: 'user' }> {

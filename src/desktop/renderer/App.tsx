@@ -12,7 +12,7 @@ const initial: SnapshotEnvelope = {
   seq: 0,
   value: {
     host: 'starting', models: [], tasks: [], roots: [], timeline: [], mcp: [], sandboxStatus: 'untested', acceptance: { commands: [], maxRepairs: 3 },
-    permission: { userMode: 'manual', phase: 'act', approval: 'ask_writes_and_commands', scope: 'selected_roots', grants: [] }, memoryEnabled: true,
+    permission: { userMode: 'manual', phase: 'act', approval: 'ask_writes_and_commands', scope: 'selected_roots', grants: [] }, memoryEnabled: true, documents: [],
   },
 };
 export const activePhases = ['running', 'awaiting_approval', 'verifying', 'cancelling'];
@@ -116,6 +116,15 @@ export default function App() {
             ))}
             {!view.roots.length && <span className="no-root">未选择目录</span>}
             <button className="ghost-button" onClick={() => call(window.codeAgent.addRoot())} disabled={active || !ready}>＋ 添加目录</button>
+            {view.documents.map(doc => (
+              <span key={doc.id} className="root-chip doc-chip" title={`${doc.path}
+sha256 ${doc.sha256}`}>
+                <span className="chip-name">{doc.name}</span>
+                <small>{doc.kind === 'pdf' ? `${doc.pages} 页${doc.noTextLayerPages.length ? `，${doc.noTextLayerPages.length} 页无文本层` : ''}` : `${doc.sections} 节`}</small>
+                <button className="chip-remove" disabled={active} onClick={() => call(window.codeAgent.removeDocument(doc.id))} aria-label={`移除文档 ${doc.name}`}>×</button>
+              </span>
+            ))}
+            <button className="ghost-button" onClick={() => call(window.codeAgent.addDocument())} disabled={active || !ready}>＋ 添加文档</button>
           </div>
           {view.models.length > 1 && (
             <select className="model-select" aria-label="切换模型" value={view.model?.id} disabled={active} onChange={event => call(window.codeAgent.selectModel(event.target.value))}>

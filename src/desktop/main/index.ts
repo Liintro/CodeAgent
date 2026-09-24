@@ -22,6 +22,7 @@ import type {
   ModelProfile,
   PermissionSetting,
   Reply,
+  DocumentView,
   RootView,
   SnapshotEnvelope,
   UserMode,
@@ -56,7 +57,7 @@ if (process.env.CODEAGENT_TEST === '1') app.disableHardwareAcceleration();
 function emptySnapshot(hostState: WorkbenchSnapshot['host']): WorkbenchSnapshot {
   return {
     host: hostState, models: currentModels, model: currentModel, tasks: [], roots: [], sandboxStatus: 'untested', timeline: [], mcp: [], acceptance: { commands: [], maxRepairs: 3 },
-    permission: { userMode: 'manual', phase: 'act', approval: 'ask_writes_and_commands', scope: 'selected_roots', grants: [] }, memoryEnabled: true,
+    permission: { userMode: 'manual', phase: 'act', approval: 'ask_writes_and_commands', scope: 'selected_roots', grants: [] }, memoryEnabled: true, documents: [],
   };
 }
 
@@ -296,6 +297,23 @@ handle<RootView | null>('desktop:addRoot', async () => {
     await persistRoots();
   }
   return added;
+});
+
+// 文档只读：Host 只读取并按哈希缓存提取结果，不写回原文件。
+handle<DocumentView | null>('desktop:addDocument', async () => {
+  await assertIdle();
+  const result = await dialog.showOpenDialog(mainWindow!, {
+    properties: ['openFile'],
+    filters: [{ name: '技术文档', extensions: ['pdf', 'docx', 'md', 'markdown', 'txt', 'html', 'htm', 'png', 'jpg', 'jpeg', 'svd'] }],
+  });
+  if (result.canceled || !result.filePaths[0]) return { ok: true, value: null };
+  return hostRequest<DocumentView>({ type: 'addDocument', path: result.filePaths[0] }, 120000);
+});
+
+handle<void>('desktop:removeDocument', async (documentId: unknown) => {
+  if (typeof documentId !== 'string') throw new Error('文档标识无效');
+  await assertIdle();
+  return hostRequest<void>({ type: 'removeDocument', documentId });
 });
 
 handle<void>('desktop:removeRoot', async (rootId: unknown) => {

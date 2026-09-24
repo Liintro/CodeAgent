@@ -1,0 +1,5 @@
+# Fixture documents are byte-exact (PDF xref offsets, ZIP containers, images); never convert their line endings.
+*.pdf binary
+*.docx binary
+*.png binary
+*.jpg binary

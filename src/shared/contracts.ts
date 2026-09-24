@@ -30,10 +30,16 @@ export type ModelProfile = {
   contextWindow: number;
   maxOutputTokens: number;
   reasoning: false;
+  /** 端点与模型接受图像输入（OpenAI 兼容的 image_url）；关闭时图片与扫描页一律不交给模型。 */
+  vision: boolean;
   hasApiKey: boolean;
 };
 
 export type ModelInput = Omit<ModelProfile, 'hasApiKey'>;
+
+export type DocumentKind = 'pdf' | 'docx' | 'markdown' | 'text' | 'html' | 'image';
+/** 任务文档：只读输入，可以位于工作目录之外。noTextLayerPages：没有文本层的 PDF 页（扫描页或图片）。 */
+export type DocumentView = { id: string; name: string; path: string; kind: DocumentKind; sha256: string; pages?: number; sections: number; noTextLayerPages: number[] };
 export type KeyChange = { action: 'keep' } | { action: 'replace'; value: string } | { action: 'copy'; fromId: string } | { action: 'remove' };
 
 export type RootView = {
@@ -230,6 +236,7 @@ export type WorkbenchSnapshot = {
   acceptance: Acceptance;
   delivery?: DeliveryView;
   memoryEnabled: boolean;
+  documents: DocumentView[];
 };
 
 export type Reply<T> = { ok: true; value: T } | { ok: false; error: AppError };
@@ -260,6 +267,8 @@ export interface DesktopBridge {
   getSnapshot(): Promise<Reply<SnapshotEnvelope>>;
   addRoot(): Promise<Reply<RootView | null>>;
   removeRoot(rootId: string): Promise<Reply<void>>;
+  addDocument(): Promise<Reply<DocumentView | null>>;
+  removeDocument(documentId: string): Promise<Reply<void>>;
   setPrimaryRoot(rootId: string): Promise<Reply<void>>;
   setPermission(userMode: UserMode): Promise<Reply<PermissionSetting | null>>;
   saveModel(profile: ModelInput, keyChange: KeyChange): Promise<Reply<ModelProfile>>;
@@ -300,6 +309,8 @@ export type HostCommand =
   | { type: 'selectTask'; taskId: string }
   | { type: 'addRoot'; path: string; grantSandbox: boolean }
   | { type: 'removeRoot'; rootId: string }
+  | { type: 'addDocument'; path: string }
+  | { type: 'removeDocument'; documentId: string }
   | { type: 'setPrimaryRoot'; rootId: string }
   | { type: 'setPermission'; userMode: UserMode }
   | { type: 'testModel' }
