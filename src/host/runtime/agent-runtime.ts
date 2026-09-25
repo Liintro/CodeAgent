@@ -107,7 +107,7 @@ const APPROVAL_ARGS_LIMIT = 8 * 1024;
 const OUTPUT_PREVIEW_LIMIT = 8 * 1024;
 // 一次尝试内的模型请求恢复预算：瞬时错误按退避重试，length 停止压缩后重试一次；用尽后照常以错误结束 Run。
 export const MODEL_RETRY = { transientDelaysMs: [2000, 8000, 20000], lengthRetries: 1 };
-const TRANSIENT = /(?:408|409|425|429|500|502|503|504|529)|rate.?limit|overloaded|too busy|temporarily unavailable|ECONNRESET|ETIMEDOUT|ECONNREFUSED|EAI_AGAIN|socket hang up|fetch failed|network error|terminated/i;
+const TRANSIENT = /\b(?:408|409|425|429|500|502|503|504|529)\b|rate.?limit|overloaded|too busy|temporarily unavailable|ECONNRESET|ETIMEDOUT|ECONNREFUSED|EAI_AGAIN|socket hang up|fetch failed|network error|terminated/i;
 
 export class AgentRuntime {
   private profile?: ModelInput;
