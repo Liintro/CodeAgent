@@ -2,12 +2,13 @@ import type { DetectedCommand, Diagnostic, ParsedFailure, RootView } from '../..
 import { cpp } from './cpp.js';
 import { go } from './go.js';
 import { java } from './java.js';
+import { keil } from './keil.js';
 import { node } from './node.js';
 import { python } from './python.js';
 import { rust } from './rust.js';
 import { relativize } from './toolchain.js';
 
-const ADAPTERS = [java, python, node, cpp, go, rust];
+const ADAPTERS = [java, python, node, cpp, go, rust, keil];
 const MAX_TESTS = 30;
 const MAX_DIAGNOSTICS = 30;
 
@@ -31,7 +32,7 @@ export function sandboxBlocked(output: string): string | undefined {
 // 命令是用户确认的任意字符串，因此不按命令选解析器：各生态的输出格式互不重叠，全部解析后合并去重。
 export function parseFailure(raw: string, rootPath: string): ParsedFailure {
   // Maven/npm 在部分终端设置下带 ANSI 颜色码。
-  const output = raw.replace(/\[[0-9;]*m/g, '');
+  const output = raw.replace(/\x1b\[[0-9;]*m/g, '');
   const tests = new Set<string>();
   const diagnostics = new Map<string, Diagnostic>();
   for (const adapter of ADAPTERS) {

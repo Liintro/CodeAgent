@@ -110,7 +110,7 @@ export function createDocumentTools(ctx: DocumentToolContext): AgentTool<any>[] 
         const rendered = await renderPdfPage(new Uint8Array(data), page);
         image = { data: rendered.png, mimeType: 'image/png', note: `【${record.name} p.${page}】页面图像 ${rendered.width}×${rendered.height}` };
       } else if (record.kind === 'image') {
-        image = { data, mimeType: /.png$/i.test(record.path) ? 'image/png' : 'image/jpeg', note: `【${record.name} 图像】` };
+        image = { data, mimeType: /\.png$/i.test(record.path) ? 'image/png' : 'image/jpeg', note: `【${record.name} 图像】` };
       } else throw new Error(`${record.kind} 文档没有页面图像，请用 doc_read`);
       if (image.data.length > IMAGE_BUDGET.maxBytes) throw new Error(`图像超过 ${IMAGE_BUDGET.maxBytes / 1024 / 1024} MB，未发送`);
       imagesUsed++;
