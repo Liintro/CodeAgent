@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { appendFile, mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { app, BrowserWindow, dialog, ipcMain, shell, utilityProcess, type UtilityProcess } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, shell, utilityProcess, type UtilityProcess } from 'electron';
 import type {
   Acceptance,
   AppError,
@@ -451,7 +451,11 @@ handle<void>('desktop:restartHost', async () => {
 });
 
 async function createWindow(): Promise<void> {
+  // 不要系统菜单栏（File/Edit/View/Window）：顶栏由界面自己绘制，右上角保留系统的最小化/最大化/关闭按钮。
+  Menu.setApplicationMenu(null);
   mainWindow = new BrowserWindow({
+    titleBarStyle: 'hidden',
+    titleBarOverlay: { color: '#ffffff', symbolColor: '#475467', height: 52 },
     width: 1180,
     height: 800,
     minWidth: 860,

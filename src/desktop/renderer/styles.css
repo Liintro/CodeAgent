@@ -76,8 +76,15 @@ pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12.5
 
 /* ---- 工作区 ---- */
 .workbench { min-width: 0; flex: 1; height: 100vh; display: flex; flex-direction: column; overflow: hidden; background: var(--bg); }
-.topbar { display: flex; align-items: center; gap: 8px; padding: 8px 18px; min-height: 52px; background: var(--surface); border-bottom: 1px solid var(--border); }
-.root-chips { flex: 1 1 0; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+/* 顶栏即窗口标题栏：空白处可拖动窗口，右侧留出系统窗口按钮（titleBarOverlay）的位置。 */
+.topbar { display: flex; align-items: center; gap: 8px; padding: 0 150px 0 18px; height: 52px; flex-shrink: 0; background: var(--surface); border-bottom: 1px solid var(--border); -webkit-app-region: drag; }
+.topbar button, .topbar select, .topbar input, .topbar a, .topbar .root-chip { -webkit-app-region: no-drag; }
+.sidebar-brand { -webkit-app-region: drag; }
+/* 目录与文档芯片单行排列，放不下时横向滚动，顶栏高度保持与系统窗口按钮一致。 */
+.root-chips { flex: 1 1 0; min-width: 0; display: flex; flex-wrap: nowrap; align-items: center; gap: 6px; overflow-x: auto; scrollbar-width: none; }
+.root-chips::-webkit-scrollbar { display: none; }
+.root-chips { mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); padding-right: 28px; }
+.root-chips > * { flex-shrink: 0; }
 .root-chip { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; min-width: 0; padding: 3px 4px 3px 10px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); font-size: 13px; }
 .root-chip.primary-root { border-color: #b9c2f4; background: var(--accent-soft); }
 .root-chip.missing-root { border-color: #f0c4bf; background: var(--bad-soft); }
