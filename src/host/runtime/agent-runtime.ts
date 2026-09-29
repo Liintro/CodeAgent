@@ -62,6 +62,8 @@ import { Ledger, type TaskRecord } from './ledger.js';
 import { recoveryBrief, repairDanglingToolCalls, unknownCalls, type RootRecovery } from './recovery.js';
 import { rebuildTimeline } from './timeline.js';
 import { detectCommands } from '../engineering/index.js';
+import { createExplorerTool } from '../engineering/explorer.js';
+import { createNavigationTools, repositoryProfile } from '../engineering/navigation.js';
 import { failureHash, feedbackMessage, verifyRoots } from './verification.js';
 
 type TaskState = {
@@ -85,6 +87,8 @@ type TaskState = {
   run?: RunView;
   error?: AppError;
   changes?: ChangesView;
+  /** 本次 Run 开始时计算的仓库概况（不持久化）。 */
+  profile?: string;
 };
 type ActiveRun = {
   id: string;
@@ -123,6 +127,10 @@ export class AgentRuntime {
   private readonly ledger: Ledger;
   private readonly memory: MemoryStore;
   private memoryEnabled = true;
+  /** 仓库概况与代码导航工具；评测消融时关闭。 */
+  private navigationEnabled = true;
+  /** 模型驱动的只读探索子代理（原型），只在消融评测中打开。 */
+  private explorerEnabled = false;
   private readonly broker = new ApprovalBroker();
   private readonly mcp: McpManager;
   private readonly sandbox?: SandboxRunner;
@@ -376,6 +384,16 @@ export class AgentRuntime {
 
   // ---- 记忆管理 ----
 
+  setNavigationEnabled(enabled: boolean): void {
+    this.assertIdle();
+    this.navigationEnabled = enabled;
+  }
+
+  setExplorerEnabled(enabled: boolean): void {
+    this.assertIdle();
+    this.explorerEnabled = enabled;
+  }
+
   setMemoryEnabled(enabled: boolean): void {
     this.memoryEnabled = enabled;
     this.emitSnapshot();
@@ -505,6 +523,7 @@ export class AgentRuntime {
       await this.assertRootsExist(task);
       const rules = await readWorkspaceRules(task.roots, this.rulesPath);
       await this.refreshRoots(task);
+      task.profile = this.navigationEnabled ? (await Promise.all(task.roots.map(root => repositoryProfile(root).catch(() => '')))).filter(Boolean).join('\n') : undefined;
       const tools = this.buildTools(task);
       this.ledger.appendEvent(runId, 'run.started', {
         modelId: profile?.modelId, permission: task.permission, sandboxStatus: this.sandboxStatus(),
@@ -824,6 +843,8 @@ ${this.stateBlock(task)}`,
         runnerOf: toolCallId => this.runners.get(toolCallId) ?? 'direct',
       }),
       ...documentTools,
+      ...(this.navigationEnabled ? createNavigationTools({ roots: task.roots, onStarted: (toolCallId, root) => this.markToolRunning(task, toolCallId, root) }) : []),
+      ...(this.explorerEnabled && this.profile ? [this.explorerTool(task)] : []),
       ...mcpTools.map(tool => ({
         ...tool,
         execute: (toolCallId: string, params: any, signal?: AbortSignal, onUpdate?: any) => {
@@ -832,6 +853,23 @@ ${this.stateBlock(task)}`,
         },
       })),
     ];
+  }
+
+  // 探索子代理只拿到只读工具；它的用量记为 purpose: explore，计入任务成本。
+  private explorerTool(task: TaskState) {
+    const profile = this.profile!;
+    const runId = task.run!.id;
+    return createExplorerTool({
+      model: this.createModel(profile),
+      streamFn: this.streamFn(profile),
+      tools: () => [
+        ...createRootTools({ roots: task.roots, fullAccess: false, includeEdit: false, includeShell: false, vision: false, onStarted: () => undefined, runnerOf: () => 'direct' }),
+        ...createNavigationTools({ roots: task.roots, onStarted: () => undefined }),
+      ],
+      onStarted: toolCallId => this.markToolRunning(task, toolCallId),
+      onUsage: usage => this.ledger.appendEvent(runId, 'model.usage', usage as Record<string, unknown>),
+      signal: () => this.active?.verifyAbort.signal,
+    });
   }
 
   private trustedMcpNames(): Set<string> {
@@ -1083,6 +1121,7 @@ ${this.stateBlock(task)}`,
   // 每个 Run 的系统提示末尾的状态块：压缩无法丢弃这些事实。
   private stateBlock(task: TaskState): string {
     const lines = ['## 任务状态（由系统生成）'];
+    if (task.profile) lines.push(task.profile);
     const commands = task.acceptance.commands.map(command => `- ${task.roots.find(root => root.id === command.rootId)?.alias ?? command.rootId}：${command.command}`);
     lines.push(commands.length ? `验收命令（用户已确认，不得修改）：\n${commands.join('\n')}` : '验收命令：未设置');
     if (task.documents.length) {

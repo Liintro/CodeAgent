@@ -17,9 +17,9 @@ const verificationText: Record<VerificationItem['state'], string> = {
 };
 const toolTitles: Record<string, string> = {
   read: '读取文件', grep: '搜索内容', find: '查找文件', ls: '列出目录', edit: '编辑文件', write: '写入文件', powershell: 'PowerShell', git: 'Git 查询',
-  doc_outline: '文档结构', doc_read: '读取文档', doc_view: '查看文档图像',
+  doc_outline: '文档结构', doc_read: '读取文档', doc_view: '查看文档图像', code_outline: '代码结构', find_symbol: '查找定义', related_files: '相关文件',
 };
-const toolIcons: Record<string, string> = { read: '↧', grep: '⌕', find: '⌕', ls: '☰', edit: '✎', write: '✎', git: '⑂', powershell: '›_', doc_outline: '▤', doc_read: '▤', doc_view: '◧' };
+const toolIcons: Record<string, string> = { read: '↧', grep: '⌕', find: '⌕', ls: '☰', edit: '✎', write: '✎', git: '⑂', powershell: '›_', doc_outline: '▤', doc_read: '▤', doc_view: '◧', code_outline: '≡', find_symbol: '⌕', related_files: '⇄' };
 
 export function Conversation({ timeline, approval, active, onDecide }: Props) {
   const scroller = useRef<HTMLElement>(null);
