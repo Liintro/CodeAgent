@@ -31,15 +31,6 @@ export function Conversation({ timeline, approval, active, onDecide }: Props) {
     if (element && stick.current) element.scrollTop = element.scrollHeight;
   }, [timeline, approval]);
 
-  if (!timeline.length) {
-    return (
-      <section className="empty-state">
-        <div className="empty-mark">⌘</div>
-        <h1>开始一个任务</h1>
-        <p>添加本地目录，让 Agent 读取、修改代码，并用验收命令验证结果。</p>
-      </section>
-    );
-  }
   const lastIndex = timeline.length - 1;
   return (
     <section

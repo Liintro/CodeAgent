@@ -65,7 +65,8 @@ export type Diagnostic = { file: string; line: number; col?: number; severity: '
 export type ParsedFailure = { tests: string[]; diagnostics: Diagnostic[] };
 export type Acceptance = { commands: VerifyCommand[]; maxRepairs: number };
 
-export type TaskSummary = { id: string; title: string; updatedAt: number; delivery: Delivery; interrupted: boolean };
+/** project：主目录名，侧栏按它分组。 */
+export type TaskSummary = { id: string; title: string; updatedAt: number; delivery: Delivery; interrupted: boolean; project?: string };
 export type RunView = { id: string; taskId: string; phase: RunPhase; toolErrors: boolean; attempt?: number };
 
 export type ToolState = 'requested' | 'awaiting_approval' | 'running' | 'succeeded' | 'failed' | 'denied' | 'cancelled' | 'unknown';

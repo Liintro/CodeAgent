@@ -1463,7 +1463,7 @@ ${this.stateBlock(task)}`,
   private snapshot(): WorkbenchSnapshot {
     const task = this.tasks.find(item => item.id === this.taskId);
     const summaries: TaskSummary[] = [...this.tasks].sort((a, b) => b.updatedAt - a.updatedAt)
-      .map(({ id, title, updatedAt, delivery: state, interrupted }) => ({ id, title, updatedAt, delivery: state, interrupted }));
+      .map(({ id, title, updatedAt, delivery: state, interrupted, roots }) => ({ id, title, updatedAt, delivery: state, interrupted, project: roots.find(root => root.primary)?.alias }));
     return structuredClone({
       host: 'ready',
       model: this.profile ? { ...this.profile, hasApiKey: Boolean(this.apiKey) } : undefined,
