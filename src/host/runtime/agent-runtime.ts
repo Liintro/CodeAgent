@@ -62,7 +62,6 @@ import { Ledger, type TaskRecord } from './ledger.js';
 import { recoveryBrief, repairDanglingToolCalls, unknownCalls, type RootRecovery } from './recovery.js';
 import { rebuildTimeline } from './timeline.js';
 import { detectCommands } from '../engineering/index.js';
-import { createExplorerTool } from '../engineering/explorer.js';
 import { createNavigationTools, repositoryProfile } from '../engineering/navigation.js';
 import { failureHash, feedbackMessage, verifyRoots } from './verification.js';
 
@@ -129,8 +128,6 @@ export class AgentRuntime {
   private memoryEnabled = true;
   /** 仓库概况与代码导航工具；评测消融时关闭。 */
   private navigationEnabled = true;
-  /** 模型驱动的只读探索子代理（原型），只在消融评测中打开。 */
-  private explorerEnabled = false;
   private readonly broker = new ApprovalBroker();
   private readonly mcp: McpManager;
   private readonly sandbox?: SandboxRunner;
@@ -387,11 +384,6 @@ export class AgentRuntime {
   setNavigationEnabled(enabled: boolean): void {
     this.assertIdle();
     this.navigationEnabled = enabled;
-  }
-
-  setExplorerEnabled(enabled: boolean): void {
-    this.assertIdle();
-    this.explorerEnabled = enabled;
   }
 
   setMemoryEnabled(enabled: boolean): void {
@@ -844,7 +836,6 @@ ${this.stateBlock(task)}`,
       }),
       ...documentTools,
       ...(this.navigationEnabled ? createNavigationTools({ roots: task.roots, onStarted: (toolCallId, root) => this.markToolRunning(task, toolCallId, root) }) : []),
-      ...(this.explorerEnabled && this.profile ? [this.explorerTool(task)] : []),
       ...mcpTools.map(tool => ({
         ...tool,
         execute: (toolCallId: string, params: any, signal?: AbortSignal, onUpdate?: any) => {
@@ -853,23 +844,6 @@ ${this.stateBlock(task)}`,
         },
       })),
     ];
-  }
-
-  // 探索子代理只拿到只读工具；它的用量记为 purpose: explore，计入任务成本。
-  private explorerTool(task: TaskState) {
-    const profile = this.profile!;
-    const runId = task.run!.id;
-    return createExplorerTool({
-      model: this.createModel(profile),
-      streamFn: this.streamFn(profile),
-      tools: () => [
-        ...createRootTools({ roots: task.roots, fullAccess: false, includeEdit: false, includeShell: false, vision: false, onStarted: () => undefined, runnerOf: () => 'direct' }),
-        ...createNavigationTools({ roots: task.roots, onStarted: () => undefined }),
-      ],
-      onStarted: toolCallId => this.markToolRunning(task, toolCallId),
-      onUsage: usage => this.ledger.appendEvent(runId, 'model.usage', usage as Record<string, unknown>),
-      signal: () => this.active?.verifyAbort.signal,
-    });
   }
 
   private trustedMcpNames(): Set<string> {
