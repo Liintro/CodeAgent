@@ -1,6 +1,6 @@
 import type { SessionManager } from '@earendil-works/pi-coding-agent';
 import { FEEDBACK_PREFIX, RECOVERY_PREFIX } from '../../shared/constants.js';
-import type { MemoryShown, RootView, RunEvent, TimelineItem, ToolItem, ToolState } from '../../shared/contracts.js';
+import type { MemoryShown, RootView, RunEvent, TimelineItem, ToolItem, ToolState, VerificationItem } from '../../shared/contracts.js';
 
 type Timed = { at: number; item: TimelineItem };
 
@@ -67,6 +67,7 @@ export function rebuildTimeline(session: SessionManager, events: RunEvent[], roo
         kind: 'verification', id: `${event.runId}-${event.seq}`, attempt: Number(data.attempt), rootAlias: roots.find(root => root.id === data.rootId)?.alias ?? String(data.rootId),
         commandLabel: String(data.label), command: String(data.command), state: data.status as 'passed', exitCode: data.exitCode as number | undefined,
         durationMs: data.durationMs as number | undefined, outputTail: String(data.outputTail ?? ''), logFile: data.logFile as string | undefined,
+        failure: data.failure as VerificationItem['failure'],
       },
     });
   }

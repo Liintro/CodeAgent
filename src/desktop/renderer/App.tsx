@@ -12,7 +12,7 @@ const initial: SnapshotEnvelope = {
   seq: 0,
   value: {
     host: 'starting', models: [], tasks: [], roots: [], timeline: [], mcp: [], sandboxStatus: 'untested', acceptance: { commands: [], maxRepairs: 3 },
-    permission: { userMode: 'manual', phase: 'act', approval: 'ask_writes_and_commands', scope: 'selected_roots', grants: [] }, memoryEnabled: true,
+    permission: { userMode: 'manual', phase: 'act', approval: 'ask_writes_and_commands', scope: 'selected_roots', grants: [] }, memoryEnabled: true, documents: [],
   },
 };
 export const activePhases = ['running', 'awaiting_approval', 'verifying', 'cancelling'];
@@ -89,6 +89,32 @@ export default function App() {
   const changeCount = view.changes?.roots.reduce((sum, root) => sum + (root.git ? root.files.length : 0), 0) ?? 0;
   const togglePanel = (tab: PanelTab) => setPanel(current => current === tab ? undefined : tab);
   const error = actionError ?? view.error;
+  const empty = !view.timeline.length;
+  const currentTitle = view.tasks.find(task => task.id === view.taskId)?.title ?? '新任务';
+  // 目录与文档芯片：任务有内容时放在顶栏，空任务时放在居中的起始卡片里（同一时间只渲染一处）。
+  const workspace = (placement: string) => (
+    <div className={`root-chips ${placement}`} aria-label="工作目录">
+      {view.roots.map(root => (
+        <span key={root.id} className={`root-chip ${root.primary ? 'primary-root' : ''} ${root.missing ? 'missing-root' : ''}`} title={root.path}>
+          <button className="chip-name" disabled={active || root.primary} onClick={() => call(window.codeAgent.setPrimaryRoot(root.id))} aria-label={`设为主目录 ${root.alias}`}>
+            {root.alias}
+          </button>
+          <small>{root.missing ? '目录不存在' : root.git ? (root.git.branch ?? '无分支') : '非 Git'}</small>
+          <button className="chip-remove" disabled={active} onClick={() => call(window.codeAgent.removeRoot(root.id))} aria-label={`移除目录 ${root.alias}`}>×</button>
+        </span>
+      ))}
+      {!view.roots.length && <span className="no-root">未选择目录</span>}
+      <button className="ghost-button" onClick={() => call(window.codeAgent.addRoot())} disabled={active || !ready}>＋ 添加目录</button>
+      {view.documents.map(doc => (
+        <span key={doc.id} className="root-chip doc-chip" title={`${doc.path}\nsha256 ${doc.sha256}`}>
+          <span className="chip-name">{doc.name}</span>
+          <small>{doc.kind === 'pdf' ? `${doc.pages} 页${doc.noTextLayerPages.length ? `，${doc.noTextLayerPages.length} 页无文本层` : ''}` : `${doc.sections} 节`}</small>
+          <button className="chip-remove" disabled={active} onClick={() => call(window.codeAgent.removeDocument(doc.id))} aria-label={`移除文档 ${doc.name}`}>×</button>
+        </span>
+      ))}
+      <button className="ghost-button" onClick={() => call(window.codeAgent.addDocument())} disabled={active || !ready}>＋ 添加文档</button>
+    </div>
+  );
 
   return (
     <div className="app-shell">
@@ -104,19 +130,8 @@ export default function App() {
 
       <main className="workbench">
         <header className="topbar">
-          <div className="root-chips" aria-label="工作目录">
-            {view.roots.map(root => (
-              <span key={root.id} className={`root-chip ${root.primary ? 'primary-root' : ''} ${root.missing ? 'missing-root' : ''}`} title={root.path}>
-                <button className="chip-name" disabled={active || root.primary} onClick={() => call(window.codeAgent.setPrimaryRoot(root.id))} aria-label={`设为主目录 ${root.alias}`}>
-                  {root.alias}
-                </button>
-                <small>{root.missing ? '目录不存在' : root.git ? (root.git.branch ?? '无分支') : '非 Git'}</small>
-                <button className="chip-remove" disabled={active} onClick={() => call(window.codeAgent.removeRoot(root.id))} aria-label={`移除目录 ${root.alias}`}>×</button>
-              </span>
-            ))}
-            {!view.roots.length && <span className="no-root">未选择目录</span>}
-            <button className="ghost-button" onClick={() => call(window.codeAgent.addRoot())} disabled={active || !ready}>＋ 添加目录</button>
-          </div>
+          <h1 className="topbar-title" title={currentTitle}>{currentTitle}</h1>
+          {!empty && workspace('in-topbar')}
           {view.models.length > 1 && (
             <select className="model-select" aria-label="切换模型" value={view.model?.id} disabled={active} onChange={event => call(window.codeAgent.selectModel(event.target.value))}>
               {view.models.map(model => <option key={model.id} value={model.id}>{model.name}</option>)}
@@ -136,12 +151,20 @@ export default function App() {
 
         <div className="workbench-body">
           <div className="workbench-main">
-            <Conversation
-              timeline={view.timeline}
-              approval={view.approval}
-              active={active}
-              onDecide={(id, decision: ApprovalDecision) => call(window.codeAgent.decideApproval(id, decision))}
-            />
+            {empty ? (
+              <section className="start-screen">
+                <div className="empty-mark">⌘</div>
+                <h2>今天要做什么？</h2>
+                <div className="start-card">{workspace('in-card')}</div>
+              </section>
+            ) : (
+              <Conversation
+                timeline={view.timeline}
+                approval={view.approval}
+                active={active}
+                onDecide={(id, decision: ApprovalDecision) => call(window.codeAgent.decideApproval(id, decision))}
+              />
+            )}
             {(actionError ?? view.error) && <ErrorView error={(actionError ?? view.error)!} />}
             <Composer
               view={view}

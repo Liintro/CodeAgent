@@ -30,10 +30,16 @@ export type ModelProfile = {
   contextWindow: number;
   maxOutputTokens: number;
   reasoning: false;
+  /** 端点与模型接受图像输入（OpenAI 兼容的 image_url）；关闭时图片与扫描页一律不交给模型。 */
+  vision: boolean;
   hasApiKey: boolean;
 };
 
 export type ModelInput = Omit<ModelProfile, 'hasApiKey'>;
+
+export type DocumentKind = 'pdf' | 'docx' | 'markdown' | 'text' | 'html' | 'image';
+/** 任务文档：只读输入，可以位于工作目录之外。noTextLayerPages：没有文本层的 PDF 页（扫描页或图片）。 */
+export type DocumentView = { id: string; name: string; path: string; kind: DocumentKind; sha256: string; pages?: number; sections: number; noTextLayerPages: number[] };
 export type KeyChange = { action: 'keep' } | { action: 'replace'; value: string } | { action: 'copy'; fromId: string } | { action: 'remove' };
 
 export type RootView = {
@@ -52,10 +58,15 @@ export type Delivery = 'none' | 'unverified' | 'verifying' | 'verified' | 'verif
 export type RootDeliveryState = 'none' | 'unverified' | 'verified' | 'verification_failed' | 'accepted' | 'restored' | 'committed';
 
 export type VerifyCommand = { id: string; rootId: string; label: string; command: string; timeoutSeconds: number };
-export type DetectedCommand = VerifyCommand & { missing?: string };
+/** toolchain：检测到的工具版本；problem：缺少或不兼容的工具链（命令照常列出，但需要用户先解决）。 */
+export type DetectedCommand = VerifyCommand & { adapter: string; toolchain?: string; problem?: string };
+export type Diagnostic = { file: string; line: number; col?: number; severity: 'error' | 'warning'; code?: string; message: string };
+/** 从真实工具输出中解析出的失败测试与编译诊断。 */
+export type ParsedFailure = { tests: string[]; diagnostics: Diagnostic[] };
 export type Acceptance = { commands: VerifyCommand[]; maxRepairs: number };
 
-export type TaskSummary = { id: string; title: string; updatedAt: number; delivery: Delivery; interrupted: boolean };
+/** project：主目录名，侧栏按它分组。 */
+export type TaskSummary = { id: string; title: string; updatedAt: number; delivery: Delivery; interrupted: boolean; project?: string };
 export type RunView = { id: string; taskId: string; phase: RunPhase; toolErrors: boolean; attempt?: number };
 
 export type ToolState = 'requested' | 'awaiting_approval' | 'running' | 'succeeded' | 'failed' | 'denied' | 'cancelled' | 'unknown';
@@ -88,6 +99,7 @@ export type VerificationItem = {
   durationMs?: number;
   outputTail: string;
   logFile?: string;
+  failure?: ParsedFailure;
 };
 export type MemoryShown = { id: string; kind: MemoryKind; validity: MemoryValidity; repoLabel: string; text: string };
 export type TimelineItem =
@@ -154,6 +166,7 @@ export type VerificationResult = {
   logFile?: string;
   outputTail: string;
   treeAtStart?: string;
+  failure?: ParsedFailure;
 };
 
 export type RootDelivery = {
@@ -203,7 +216,7 @@ export type RunEventType =
   | 'run.started' | 'git.snapshot' | 'tool.requested' | 'permission.decided' | 'tool.started'
   | 'tool.finished' | 'model.usage' | 'run.ended'
   | 'verification.started' | 'verification.finished' | 'repair.requested' | 'compaction.done' | 'delivery.changed'
-  | 'memory.recalled' | 'memory.captured' | 'memory.capture_failed' | 'memory.changed';
+  | 'memory.recalled' | 'memory.captured' | 'memory.capture_failed' | 'memory.changed' | 'model.retry';
 export type RunEvent = { runId: string; seq: number; at: number; type: RunEventType; data: Record<string, unknown> };
 
 export type WorkbenchSnapshot = {
@@ -224,6 +237,7 @@ export type WorkbenchSnapshot = {
   acceptance: Acceptance;
   delivery?: DeliveryView;
   memoryEnabled: boolean;
+  documents: DocumentView[];
 };
 
 export type Reply<T> = { ok: true; value: T } | { ok: false; error: AppError };
@@ -254,6 +268,8 @@ export interface DesktopBridge {
   getSnapshot(): Promise<Reply<SnapshotEnvelope>>;
   addRoot(): Promise<Reply<RootView | null>>;
   removeRoot(rootId: string): Promise<Reply<void>>;
+  addDocument(): Promise<Reply<DocumentView | null>>;
+  removeDocument(documentId: string): Promise<Reply<void>>;
   setPrimaryRoot(rootId: string): Promise<Reply<void>>;
   setPermission(userMode: UserMode): Promise<Reply<PermissionSetting | null>>;
   saveModel(profile: ModelInput, keyChange: KeyChange): Promise<Reply<ModelProfile>>;
@@ -294,6 +310,8 @@ export type HostCommand =
   | { type: 'selectTask'; taskId: string }
   | { type: 'addRoot'; path: string; grantSandbox: boolean }
   | { type: 'removeRoot'; rootId: string }
+  | { type: 'addDocument'; path: string }
+  | { type: 'removeDocument'; documentId: string }
   | { type: 'setPrimaryRoot'; rootId: string }
   | { type: 'setPermission'; userMode: UserMode }
   | { type: 'testModel' }

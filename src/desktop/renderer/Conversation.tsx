@@ -17,8 +17,9 @@ const verificationText: Record<VerificationItem['state'], string> = {
 };
 const toolTitles: Record<string, string> = {
   read: '读取文件', grep: '搜索内容', find: '查找文件', ls: '列出目录', edit: '编辑文件', write: '写入文件', powershell: 'PowerShell', git: 'Git 查询',
+  doc_outline: '文档结构', doc_read: '读取文档', doc_view: '查看文档图像', code_outline: '代码结构', find_symbol: '查找定义', related_files: '相关文件',
 };
-const toolIcons: Record<string, string> = { read: '↧', grep: '⌕', find: '⌕', ls: '☰', edit: '✎', write: '✎', git: '⑂', powershell: '›_' };
+const toolIcons: Record<string, string> = { read: '↧', grep: '⌕', find: '⌕', ls: '☰', edit: '✎', write: '✎', git: '⑂', powershell: '›_', doc_outline: '▤', doc_read: '▤', doc_view: '◧', code_outline: '≡', find_symbol: '⌕', related_files: '⇄' };
 
 export function Conversation({ timeline, approval, active, onDecide }: Props) {
   const scroller = useRef<HTMLElement>(null);
@@ -30,15 +31,6 @@ export function Conversation({ timeline, approval, active, onDecide }: Props) {
     if (element && stick.current) element.scrollTop = element.scrollHeight;
   }, [timeline, approval]);
 
-  if (!timeline.length) {
-    return (
-      <section className="empty-state">
-        <div className="empty-mark">⌘</div>
-        <h1>开始一个任务</h1>
-        <p>添加本地目录，让 Agent 读取、修改代码，并用验收命令验证结果。</p>
-      </section>
-    );
-  }
   const lastIndex = timeline.length - 1;
   return (
     <section
@@ -145,8 +137,14 @@ const VerificationCard = memo(function VerificationCard({ item }: { item: Verifi
         {item.durationMs !== undefined && <span className="tool-meta">{formatDuration(item.durationMs)}</span>}
         <span className={`state-chip ${item.state === 'passed' ? 'succeeded' : item.state === 'running' ? 'running' : 'failed'}`}>{verificationText[item.state]}</span>
       </div>
+      {item.failure && (
+        <ul className="failure-list" aria-label="解析出的失败">
+          {item.failure.tests.map(name => <li key={`t:${name}`}>测试 <code>{name}</code></li>)}
+          {item.failure.diagnostics.map((entry, index) => <li key={`d:${index}`}><code>{entry.file}:{entry.line}</code> {entry.message}</li>)}
+        </ul>
+      )}
       {item.state !== 'running' && item.outputTail && (
-        <details className="tool-output" open={item.state !== 'passed'}>
+        <details className="tool-output" open={item.state !== 'passed' && !item.failure}>
           <summary>{item.exitCode !== undefined ? `退出码 ${item.exitCode} · ` : ''}输出末尾{item.logFile ? '（完整日志已保存）' : ''}</summary>
           <pre>{item.outputTail}</pre>
         </details>

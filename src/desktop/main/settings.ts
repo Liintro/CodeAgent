@@ -34,6 +34,7 @@ export function validateModelInput(value: unknown): ModelInput {
     contextWindow: input.contextWindow as number,
     maxOutputTokens: input.maxOutputTokens as number,
     reasoning: false,
+    vision: input.vision === true,
   };
 }
 

@@ -13,6 +13,8 @@ export type DeliveryInput = {
   verifications: VerificationResult[];
   /** 非 Git 目录没有树对象，用工具修改计数 mut:<n> 代替。 */
   mutations: Map<string, number>;
+  /** 任务文档及 Agent 读取时引用过的页/章节（来自 doc_read 调用），写入交付报告以便追溯需求来源。 */
+  documents: { name: string; kind: string; sha256: string; citations: string[] }[];
 };
 
 export const treeOfPlainRoot = (count: number) => `mut:${count}`;
@@ -89,7 +91,7 @@ export async function persistDelivery(input: DeliveryInput, view: DeliveryView, 
       await rm(row.patchFile, { force: true });
     }
     const reportFile = join(directory, `delivery-${entry.alias}.json`);
-    await writeFile(reportFile, JSON.stringify({ ...entry, path: root.path, patchFile, reportFile }, null, 2), 'utf8');
+    await writeFile(reportFile, JSON.stringify({ ...entry, path: root.path, patchFile, reportFile, documents: input.documents }, null, 2), 'utf8');
     Object.assign(entry, { patchFile, reportFile });
     input.ledger.saveDelivery({
       taskId: input.taskId, rootId: entry.rootId, state: entry.state, baseTree: entry.baseTree, finalTree: entry.finalTree,

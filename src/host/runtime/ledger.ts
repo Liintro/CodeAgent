@@ -3,6 +3,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { Acceptance, Delivery, RootDeliveryState, RunEvent, RunEventType, RunPhase, UserMode } from '../../shared/contracts.js';
+import type { DocumentRecord } from '../documents/index.js';
 
 export type RunRecord = {
   id: string;
@@ -80,6 +81,11 @@ const MIGRATIONS = [`
   CREATE TABLE memory_use (
     run_id TEXT NOT NULL REFERENCES run(id), item_id TEXT NOT NULL, point TEXT NOT NULL, validity TEXT NOT NULL,
     score REAL NOT NULL, injected INTEGER NOT NULL, PRIMARY KEY (run_id, item_id, point));
+`, `
+  CREATE TABLE task_document (
+    task_id TEXT NOT NULL REFERENCES task(id), doc_id TEXT NOT NULL, position INTEGER NOT NULL, name TEXT NOT NULL, path TEXT NOT NULL,
+    kind TEXT NOT NULL, sha256 TEXT NOT NULL, size INTEGER NOT NULL, mtime_ms REAL NOT NULL, pages INTEGER, sections INTEGER NOT NULL,
+    no_text_pages_json TEXT NOT NULL DEFAULT '[]', PRIMARY KEY (task_id, doc_id));
 `];
 
 // 只记录事实（发生了什么）；对话内容由 Pi SessionManager 保存。
@@ -104,6 +110,22 @@ export class Ledger {
 
   close(): void {
     if (this.db.isOpen) this.db.close();
+  }
+
+  // ---- 任务文档 ----
+
+  saveDocuments(taskId: string, documents: DocumentRecord[]): void {
+    this.db.prepare('DELETE FROM task_document WHERE task_id = ?').run(taskId);
+    const insert = this.db.prepare(`INSERT INTO task_document (task_id, doc_id, position, name, path, kind, sha256, size, mtime_ms, pages, sections, no_text_pages_json)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    documents.forEach((doc, position) => insert.run(taskId, doc.id, position, doc.name, doc.path, doc.kind, doc.sha256, doc.size, doc.mtimeMs, doc.pages ?? null, doc.sections, JSON.stringify(doc.noTextLayerPages)));
+  }
+
+  documents(taskId: string): DocumentRecord[] {
+    return (this.db.prepare('SELECT * FROM task_document WHERE task_id = ? ORDER BY position').all(taskId) as Record<string, any>[]).map(row => ({
+      id: row.doc_id, name: row.name, path: row.path, kind: row.kind, sha256: row.sha256, size: row.size, mtimeMs: row.mtime_ms,
+      pages: row.pages ?? undefined, sections: row.sections, noTextLayerPages: JSON.parse(row.no_text_pages_json),
+    }));
   }
 
   // ---- Task ----

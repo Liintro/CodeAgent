@@ -20,6 +20,8 @@ export type ToolContext = {
   runnerOf: (toolCallId: string) => RunnerKind;
   includeShell: boolean;
   includeEdit: boolean;
+  /** 当前模型接受图像输入；否则拒绝读取图片，而不是让模型假装看过。 */
+  vision: boolean;
 };
 
 export function createRootTools(ctx: ToolContext): AgentTool<any>[] {
@@ -62,7 +64,7 @@ function scoped(name: string, factory: (cwd: string) => AgentTool<any>, ctx: Too
       const root = pickRoot(ctx, alias);
       if (typeof rest.path === 'string') {
         rest.path = await resolveInScope(ctx.roots, root.path, rest.path, ctx.fullAccess);
-        if (name === 'read' && imageExtensions.has(extname(rest.path).toLowerCase())) throw new Error('本版本不支持读取图片文件');
+        if (name === 'read' && !ctx.vision && imageExtensions.has(extname(rest.path).toLowerCase())) throw new Error('当前模型未启用图像输入（模型设置“支持图像输入”），无法读取或解读图片文件');
       }
       ctx.onStarted(toolCallId, root);
       let instance = instances.get(root.id);

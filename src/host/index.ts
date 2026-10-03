@@ -47,6 +47,12 @@ process.parentPort?.on('message', async ({ data }: { data: HostRequest }) => {
         case 'removeRoot':
           reply = ok(await runtime.removeRoot(command.rootId));
           break;
+        case 'addDocument':
+          reply = ok(await runtime.addDocument(command.path));
+          break;
+        case 'removeDocument':
+          reply = ok(runtime.removeDocument(command.documentId));
+          break;
         case 'setPrimaryRoot':
           reply = ok(runtime.setPrimaryRoot(command.rootId));
           break;
@@ -75,7 +81,7 @@ process.parentPort?.on('message', async ({ data }: { data: HostRequest }) => {
           reply = ok(await runtime.getDiff(command.rootId, command.path));
           break;
         case 'detectAcceptance':
-          reply = ok(runtime.detectAcceptance());
+          reply = ok(await runtime.detectAcceptance());
           break;
         case 'setAcceptance':
           reply = ok(runtime.setAcceptance(command.acceptance));

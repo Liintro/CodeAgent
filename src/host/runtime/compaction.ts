@@ -49,12 +49,12 @@ export function contextTokens(session: SessionManager, fixedTokens: number): num
 
 // 仅使用 Pi 导出的原语：估算、切点、摘要。摘要写入 Pi 会话，调用方用 buildSessionContext 取得新上下文。
 export async function compactIfNeeded(
-  session: SessionManager, model: Model<any>, apiKey: string | undefined, streamFn: StreamFn, fixedTokens: number, signal?: AbortSignal,
+  session: SessionManager, model: Model<any>, apiKey: string | undefined, streamFn: StreamFn, fixedTokens: number, signal?: AbortSignal, force = false,
 ): Promise<CompactionOutcome | undefined> {
   const contextWindow = model.contextWindow!;
   const settings = settingsFor(contextWindow, model.maxTokens!);
   const tokensBefore = contextTokens(session, fixedTokens);
-  if (!shouldCompact(tokensBefore, contextWindow, settings)) return undefined;
+  if (!force && !shouldCompact(tokensBefore, contextWindow, settings)) return undefined;
 
   const entries = session.getBranch();
   const previousIndex = entries.findLastIndex(entry => entry.type === 'compaction');
