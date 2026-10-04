@@ -80,7 +80,7 @@ function shellTool(ctx: ToolContext): AgentTool<any> {
   return {
     ...base,
     parameters: withRootParameter(base.parameters, ctx),
-    execute: (toolCallId, params: any, signal, onUpdate) => {
+    execute: async (toolCallId, params: any, signal, onUpdate) => {
       const { root: alias, ...rest } = params;
       const root = pickRoot(ctx, alias);
       const runner = ctx.runnerOf(toolCallId);
@@ -91,7 +91,15 @@ function shellTool(ctx: ToolContext): AgentTool<any> {
         const operations = runner === 'sandbox' ? ctx.sandbox!.operations() : ctx.sandbox?.directOperations();
         instances.set(key, instance = createPowerShellTool(root.path, { exposeSessionEnvironment: false, operations }));
       }
-      return instance.execute(toolCallId, rest, signal, onUpdate);
+      const result = await instance.execute(toolCallId, rest, signal, onUpdate);
+      // 命令确实运行过并以非零退出码结束不算工具失败：输出（含 "Command exited with code N"）照常交给模型判断；
+      // 超时、启动失败、沙箱拒绝等没有 exit_code 的错误结果保持失败。
+      const exitCode = (result as { structuredContent?: { exit_code?: unknown } })?.structuredContent?.exit_code;
+      if (result && typeof result === 'object' && result.isError === true && typeof exitCode === 'number') {
+        const { isError: _isError, ...completed } = result as typeof result & { isError?: boolean };
+        return completed;
+      }
+      return result;
     },
   };
 }
