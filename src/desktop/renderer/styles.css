@@ -290,6 +290,11 @@ pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12.5
 .test-result { padding: 12px; border-radius: 8px; background: var(--surface-2); }
 .mcp-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
 .mcp-row .checkbox-label { flex: 1; }
+.web-search-settings { border: 1px solid var(--border); border-radius: 8px; padding: 4px 14px 12px; margin: 0 0 12px; display: grid; gap: 10px; }
+.web-search-settings legend { padding: 0 6px; }
+.web-search-settings legend .checkbox-label { margin: 0; }
+.mcp-section-title { margin: 4px 0; font-size: 13px; color: var(--muted); font-weight: 600; }
+.field-hint { color: var(--faint); font-size: 12px; line-height: 1.5; }
 .mcp-state.ready { color: var(--ok); }
 .mcp-state.failed { color: var(--bad); }
 .mcp-count { color: var(--faint); font-size: 12px; }
