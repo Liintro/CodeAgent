@@ -20,6 +20,9 @@ export type PermissionSetting = {
 
 export type AppError = { code: string; message: string; detail?: string };
 
+/** 思考强度；false 表示关闭。取值与 OpenAI 兼容端点的 reasoning_effort 对齐。 */
+export type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
 export type ModelProfile = {
   id: string;
   name: string;
@@ -29,7 +32,12 @@ export type ModelProfile = {
   modelId: string;
   contextWindow: number;
   maxOutputTokens: number;
-  reasoning: false;
+  /**
+   * 思考强度：false=关闭；开启时按端点类型透传——DeepSeek 官方端点（deepseek.com）发送
+   * thinking:{type:"enabled"} + reasoning_effort，其余 OpenAI 兼容端点发送 reasoning_effort。
+   * 端点不支持该参数时会以请求错误呈现，不伪装成已生效。
+   */
+  reasoning: false | ThinkingLevel;
   /** 端点与模型接受图像输入（OpenAI 兼容的 image_url）；关闭时图片与扫描页一律不交给模型。 */
   vision: boolean;
   hasApiKey: boolean;
@@ -212,6 +220,10 @@ export type MemoryItemView = {
 };
 export type MemoryChange = { id: string; action: 'reject' | 'restore' | 'delete' } | { id: string; action: 'edit'; text: string };
 
+/** 联网搜索的可见配置（不含密钥本体）；enabled=false 时工具不存在。 */
+export type WebSearchView = { enabled: boolean; searchUrl?: string; apiKeyHeader?: string; hasApiKey: boolean };
+export type WebSearchInput = { enabled: boolean; searchUrl?: string; apiKeyHeader?: string; apiKey?: string };
+
 export type RunEventType =
   | 'run.started' | 'git.snapshot' | 'tool.requested' | 'permission.decided' | 'tool.started'
   | 'tool.finished' | 'model.usage' | 'run.ended'
@@ -237,6 +249,7 @@ export type WorkbenchSnapshot = {
   acceptance: Acceptance;
   delivery?: DeliveryView;
   memoryEnabled: boolean;
+  webSearch: WebSearchView;
   documents: DocumentView[];
 };
 
@@ -296,6 +309,7 @@ export interface DesktopBridge {
   changeMemory(change: MemoryChange): Promise<Reply<void>>;
   addMemoryNote(text: string): Promise<Reply<void>>;
   setMemoryEnabled(enabled: boolean): Promise<Reply<void>>;
+  setWebSearch(config: WebSearchInput): Promise<Reply<void>>;
   reloadMcp(): Promise<Reply<void>>;
   setMcpEnabled(name: string, enabled: boolean): Promise<Reply<void>>;
   openMcpConfig(): Promise<Reply<void>>;
@@ -333,6 +347,7 @@ export type HostCommand =
   | { type: 'changeMemory'; change: MemoryChange }
   | { type: 'addMemoryNote'; text: string }
   | { type: 'setMemoryEnabled'; enabled: boolean }
+  | { type: 'setWebSearch'; config: WebSearchInput }
   | { type: 'setMcpServers'; servers: McpServerDefinition[] }
   | { type: 'getRunEvents'; runId: string }
   | { type: 'getSnapshot' }

@@ -3,7 +3,7 @@ import type { ApprovalDecision, ApprovalRequest, PermissionSetting, UserMode } f
 export type ToolClass = 'read' | 'edit' | 'shell' | 'mcp' | 'mcp_trusted';
 export type Verdict = 'allow' | 'ask' | 'block';
 
-const readTools = new Set(['read', 'grep', 'find', 'ls', 'git', 'doc_outline', 'doc_read', 'doc_view', 'code_outline', 'find_symbol', 'related_files']);
+const readTools = new Set(['read', 'grep', 'find', 'ls', 'git', 'doc_outline', 'doc_read', 'doc_view', 'code_outline', 'find_symbol', 'related_files', 'web_search', 'web_fetch']);
 
 export function classify(name: string, trustedMcp: ReadonlySet<string>): ToolClass {
   if (readTools.has(name)) return 'read';

@@ -54,6 +54,7 @@ import { McpManager } from '../tools/mcp.js';
 import { createRootTools } from '../tools/native-tools.js';
 import { ApprovalBroker, classify, permissionFor, registered, verdict } from '../tools/permission.js';
 import { SandboxRunner } from '../tools/sandbox.js';
+import { createWebTools, type WebSearchRuntimeConfig } from '../tools/web.js';
 import * as delivery from '../workspace/delivery.js';
 import * as git from '../workspace/git.js';
 import { openRoot, readWorkspaceRules } from '../workspace/workspace.js';
@@ -128,6 +129,8 @@ export class AgentRuntime {
   private memoryEnabled = true;
   /** 仓库概况与代码导航工具；评测消融时关闭。 */
   private navigationEnabled = true;
+  /** 联网搜索配置；未配置时 web 工具不存在，评测环境从不配置。 */
+  private webSearch?: WebSearchRuntimeConfig;
   private readonly broker = new ApprovalBroker();
   private readonly mcp: McpManager;
   private readonly sandbox?: SandboxRunner;
@@ -388,6 +391,18 @@ export class AgentRuntime {
 
   setMemoryEnabled(enabled: boolean): void {
     this.memoryEnabled = enabled;
+    this.emitSnapshot();
+  }
+
+  // 开启需要完整配置；关闭或缺少接口地址时一律回到未配置状态（工具不存在）。
+  setWebSearch(config: { enabled: boolean; searchUrl?: string; apiKeyHeader?: string; apiKey?: string }): void {
+    this.webSearch = config.enabled && config.searchUrl
+      ? {
+        searchUrl: config.searchUrl,
+        ...(config.apiKeyHeader ? { apiKeyHeader: config.apiKeyHeader } : {}),
+        ...(config.apiKey ? { apiKey: config.apiKey } : {}),
+      }
+      : undefined;
     this.emitSnapshot();
   }
 
@@ -805,6 +820,8 @@ ${this.stateBlock(task)}`,
       apiKey: this.apiKey,
       maxTokens: options?.maxTokens ?? profile.maxOutputTokens,
       maxRetries: 0,
+      // 思考强度随等级透传；端点不支持该参数时会以模型错误呈现，不伪装成已生效。
+      ...(profile.reasoning ? { reasoning: profile.reasoning } : {}),
     });
   }
 
@@ -820,7 +837,9 @@ ${this.stateBlock(task)}`,
         this.ledger.saveDocuments(task.id, task.documents);
       },
     }) : [];
-    if (!task.roots.length) return documentTools;
+    // web 工具不依赖工作目录，没有目录时也保持可用。
+    const webTools = this.webSearch ? createWebTools(this.webSearch, { onStarted: toolCallId => this.markToolRunning(task, toolCallId) }) : [];
+    if (!task.roots.length) return [...documentTools, ...webTools];
     const trusted = this.trustedMcpNames();
     const mcpTools = this.mcp.tools().filter(tool => registered(mode, classify(tool.name, trusted)));
     return [
@@ -835,6 +854,7 @@ ${this.stateBlock(task)}`,
         runnerOf: toolCallId => this.runners.get(toolCallId) ?? 'direct',
       }),
       ...documentTools,
+      ...webTools,
       ...(this.navigationEnabled ? createNavigationTools({ roots: task.roots, onStarted: (toolCallId, root) => this.markToolRunning(task, toolCallId, root) }) : []),
       ...mcpTools.map(tool => ({
         ...tool,
@@ -1371,7 +1391,17 @@ ${this.stateBlock(task)}`,
   private modeStatement(task: TaskState): string {
     const roots = task.roots.map(root => `- ${root.alias}${root.primary ? '（主目录）' : ''}：${root.path}${root.git ? `，Git 分支 ${root.git.branch ?? '未知'}` : '，非 Git'}`).join('\n');
     const mode = { plan: '计划：只读，仅可读取与搜索，不要修改任何文件，给出分步实施计划', manual: '手动：编辑与命令均需用户批准', accept_edits: '接受编辑：范围内文件编辑自动通过，命令需批准', auto: '自动：编辑自动通过，命令仅在沙箱内自动执行', bypass: '绕过权限：不再逐项询问' }[task.permission.userMode];
-    return `你是 CodeAgent 中文工作台中的编程助手。只使用显式提供的工具，所有文件路径必须位于下列目录内；工具可用 root 参数选择目录，默认主目录。根据真实工具结果回答，不要声称未执行的验证已经通过。\n工作目录：\n${roots || '（未选择目录）'}\n当前权限模式：${mode}`;
+    return `你是 CodeAgent 中文工作台中的编程助手。只使用显式提供的工具，所有文件路径必须位于下列目录内；工具可用 root 参数选择目录，默认主目录。根据真实工具结果回答，不要声称未执行的验证已经通过。
+工作目录：
+${roots || '（未选择目录）'}
+当前权限模式：${mode}
+
+## 工程守则（必须遵守）
+1. 范围纪律：只在上述工作目录内探索与取证。不要读取、扫描或修改目录之外的文件系统、缓存目录或其他会话/运行留下的数据；需要工具链信息时用 Get-Command 或 where.exe 查询，不要全盘递归搜索。
+2. 测试契约：测试是行为契约，测试失败首先当作源码问题对待。不要为了让测试通过而修改或删除已有测试、放宽断言或改写期望值；除非任务明确要求，交付的改动不包含对任何测试文件的改动（也不要新增测试文件）。
+3. 验证闭环：修改完成后，先从仓库的构建配置（package.json、Makefile、Cargo.toml、go.mod、pom.xml、CMakeLists.txt 等）识别真实的构建/测试入口，运行与本次改动最相关的最小子集。因环境原因（依赖缺失、权限拒绝、工具链不可用）无法运行时，同一目标最多尝试 2 次即降级为替代验证：复核改动上下文、用 git diff 自查、或在系统临时目录自建最小验证脚本（验证后删除，不留在工作区）。
+4. 成本纪律：命令设置合理超时（常用 30–300 秒），不要让长命令阻塞整个任务；同一命令失败后不要原样重跑；探索阶段用复合命令一次获取多项信息，避免对同一文件反复读取。
+5. 交付自查：结束前用 git status/diff 核对改动范围，确认没有混入临时文件、调试脚本或无关产物。最终回复如实说明：做了什么、哪些验证已通过、哪些验证无法执行及原因；验证不完整的部分不得声称完成。`;
   }
 
   private createModel(profile: ModelInput): Model<'openai-completions'> {
@@ -1381,7 +1411,8 @@ ${this.stateBlock(task)}`,
       api: 'openai-completions',
       provider: 'codeagent',
       baseUrl: profile.baseUrl,
-      reasoning: false,
+      // pi-ai 按这个开关决定是否携带思考参数；实际等级在 streamFn 里随请求发送。
+      reasoning: profile.reasoning !== false,
       input: profile.vision ? ['text', 'image'] : ['text'],
       contextWindow: profile.contextWindow,
       maxTokens: profile.maxOutputTokens,
@@ -1456,6 +1487,12 @@ ${this.stateBlock(task)}`,
       acceptance: task?.acceptance ?? { commands: [], maxRepairs: DEFAULT_MAX_REPAIRS },
       delivery: task?.deliveryView,
       memoryEnabled: this.memoryEnabled,
+      webSearch: this.webSearch ? {
+        enabled: true,
+        searchUrl: this.webSearch.searchUrl,
+        ...(this.webSearch.apiKeyHeader ? { apiKeyHeader: this.webSearch.apiKeyHeader } : {}),
+        hasApiKey: Boolean(this.webSearch.apiKey),
+      } : { enabled: false, hasApiKey: false },
       documents: task?.documents.map(documentView) ?? [],
     });
   }

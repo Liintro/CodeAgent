@@ -12,7 +12,8 @@ const initial: SnapshotEnvelope = {
   seq: 0,
   value: {
     host: 'starting', models: [], tasks: [], roots: [], timeline: [], mcp: [], sandboxStatus: 'untested', acceptance: { commands: [], maxRepairs: 3 },
-    permission: { userMode: 'manual', phase: 'act', approval: 'ask_writes_and_commands', scope: 'selected_roots', grants: [] }, memoryEnabled: true, documents: [],
+    permission: { userMode: 'manual', phase: 'act', approval: 'ask_writes_and_commands', scope: 'selected_roots', grants: [] }, memoryEnabled: true,
+    webSearch: { enabled: false, hasApiKey: false }, documents: [],
   },
 };
 export const activePhases = ['running', 'awaiting_approval', 'verifying', 'cancelling'];
@@ -195,7 +196,7 @@ export default function App() {
           onCancel={cancel}
         />
       )}
-      {mcpOpen && <McpPanel servers={view.mcp} onClose={() => setMcpOpen(false)} onError={setActionError} />}
+      {mcpOpen && <McpPanel servers={view.mcp} webSearch={view.webSearch} onClose={() => setMcpOpen(false)} onError={setActionError} />}
     </div>
   );
 }

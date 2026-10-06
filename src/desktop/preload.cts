@@ -35,6 +35,7 @@ const bridge: DesktopBridge = {
   changeMemory: change => invoke('desktop:changeMemory', change),
   addMemoryNote: text => invoke('desktop:addMemoryNote', text),
   setMemoryEnabled: enabled => invoke('desktop:setMemoryEnabled', enabled),
+  setWebSearch: config => invoke('desktop:setWebSearch', config),
   reloadMcp: () => invoke('desktop:reloadMcp'),
   setMcpEnabled: (name, enabled) => invoke('desktop:setMcpEnabled', name, enabled),
   openMcpConfig: () => invoke('desktop:openMcpConfig'),

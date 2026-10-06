@@ -2,10 +2,22 @@ import { randomUUID } from 'node:crypto';
 import { copyFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { safeStorage } from 'electron';
-import type { KeyChange, ModelInput, ModelProfile } from '../../shared/contracts.js';
+import type { KeyChange, ModelInput, ModelProfile, ThinkingLevel } from '../../shared/contracts.js';
 
 type StoredModel = ModelInput & { encryptedApiKey?: string };
-type Settings = { models: StoredModel[]; activeModelId?: string; recentRoots: string[]; sandboxGrants: string[]; memoryEnabled?: boolean };
+type Settings = {
+  models: StoredModel[]; activeModelId?: string; recentRoots: string[]; sandboxGrants: string[]; memoryEnabled?: boolean;
+  webSearch?: WebSearchSettings;
+};
+/** 联网搜索配置；enabled 默认 false，评测环境从不开启。 */
+export type WebSearchSettings = { enabled: boolean; searchUrl?: string; apiKeyHeader?: string; encryptedApiKey?: string };
+
+const THINKING_LEVELS: readonly ThinkingLevel[] = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+
+// 旧配置里的 reasoning 恒为 false；无法识别的值一律按关闭处理，绝不把未开启的思考伪装成已开启。
+function validateReasoning(value: unknown): false | ThinkingLevel {
+  return typeof value === 'string' && (THINKING_LEVELS as readonly string[]).includes(value) ? value as ThinkingLevel : false;
+}
 
 export function validateModelInput(value: unknown): ModelInput {
   if (!value || typeof value !== 'object') throw new Error('模型配置无效');
@@ -33,7 +45,7 @@ export function validateModelInput(value: unknown): ModelInput {
     modelId,
     contextWindow: input.contextWindow as number,
     maxOutputTokens: input.maxOutputTokens as number,
-    reasoning: false,
+    reasoning: validateReasoning(input.reasoning),
     vision: input.vision === true,
   };
 }
@@ -55,6 +67,7 @@ export class SettingsStore {
         encryptedApiKey: typeof (item as Record<string, unknown>).encryptedApiKey === 'string' ? (item as Record<string, unknown>).encryptedApiKey as string : undefined,
       }));
       const requestedActive = typeof value.activeModelId === 'string' ? value.activeModelId : undefined;
+      const rawWeb = (value.webSearch ?? {}) as Record<string, unknown>;
       this.settings = {
         models,
         activeModelId: models.some(model => model.id === requestedActive) ? requestedActive : models[0]?.id,
@@ -64,6 +77,12 @@ export class SettingsStore {
           : typeof value.lastRootPath === 'string' ? [value.lastRootPath] : [],
         sandboxGrants: Array.isArray(value.sandboxGrants) ? value.sandboxGrants.filter((item): item is string => typeof item === 'string') : [],
         memoryEnabled: value.memoryEnabled === false ? false : undefined,
+        webSearch: {
+          enabled: rawWeb.enabled === true,
+          ...(typeof rawWeb.searchUrl === 'string' && rawWeb.searchUrl ? { searchUrl: rawWeb.searchUrl } : {}),
+          ...(typeof rawWeb.apiKeyHeader === 'string' && rawWeb.apiKeyHeader ? { apiKeyHeader: rawWeb.apiKeyHeader } : {}),
+          ...(typeof rawWeb.encryptedApiKey === 'string' && rawWeb.encryptedApiKey ? { encryptedApiKey: rawWeb.encryptedApiKey } : {}),
+        },
       };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
@@ -142,6 +161,56 @@ export class SettingsStore {
   async setMemoryEnabled(enabled: boolean): Promise<void> {
     this.settings = { ...this.settings, memoryEnabled: enabled };
     await this.persist(this.settings);
+  }
+
+  // 联网搜索：默认关闭，只有保存过配置才可能开启；评测模式不读取桌面设置，天然没有联网工具。
+  get webSearch(): WebSearchSettings {
+    return this.settings.webSearch ?? { enabled: false };
+  }
+
+  async webSearchKey(): Promise<string | undefined> {
+    return (await this.decryptStoredKey(this.settings.webSearch?.encryptedApiKey)).value;
+  }
+
+  async saveWebSearch(input: { enabled: boolean; searchUrl?: string; apiKeyHeader?: string; keyChange: KeyChange }): Promise<void> {
+    const searchUrl = typeof input.searchUrl === 'string' ? input.searchUrl.trim() : '';
+    const apiKeyHeader = typeof input.apiKeyHeader === 'string' ? input.apiKeyHeader.trim() : '';
+    if (input.enabled) {
+      if (!searchUrl) throw new Error('启用联网搜索需要先填写搜索接口地址');
+      try {
+        const url = new URL(searchUrl);
+        if (!['http:', 'https:'].includes(url.protocol)) throw new Error();
+      } catch {
+        throw new Error('搜索接口地址格式无效');
+      }
+    }
+    const previous = this.settings.webSearch;
+    let encryptedApiKey = previous?.encryptedApiKey;
+    if (input.keyChange.action === 'replace') {
+      if (!input.keyChange.value) throw new Error('API Key 不能为空');
+      if (!await safeStorage.isAsyncEncryptionAvailable()) throw new Error('当前系统无法加密保存 API Key');
+      encryptedApiKey = (await safeStorage.encryptStringAsync(input.keyChange.value)).toString('base64');
+    } else if (input.keyChange.action === 'remove') {
+      encryptedApiKey = undefined;
+    }
+    const webSearch: WebSearchSettings = {
+      enabled: input.enabled,
+      ...(searchUrl ? { searchUrl } : {}),
+      ...(apiKeyHeader ? { apiKeyHeader } : {}),
+      ...(encryptedApiKey ? { encryptedApiKey } : {}),
+    };
+    this.settings = { ...this.settings, webSearch };
+    await this.persist(this.settings);
+  }
+
+  private async decryptStoredKey(encrypted?: string): Promise<{ value?: string; error?: string }> {
+    if (!encrypted) return {};
+    if (!await safeStorage.isAsyncEncryptionAvailable()) return { error: '当前系统无法解密 API Key，请重新输入' };
+    try {
+      return { value: (await safeStorage.decryptStringAsync(Buffer.from(encrypted, 'base64'))).result };
+    } catch {
+      return { error: 'API Key 解密失败，请重新输入' };
+    }
   }
 
   get sandboxGrants(): string[] {

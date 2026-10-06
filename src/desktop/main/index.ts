@@ -57,7 +57,8 @@ if (process.env.CODEAGENT_TEST === '1') app.disableHardwareAcceleration();
 function emptySnapshot(hostState: WorkbenchSnapshot['host']): WorkbenchSnapshot {
   return {
     host: hostState, models: currentModels, model: currentModel, tasks: [], roots: [], sandboxStatus: 'untested', timeline: [], mcp: [], acceptance: { commands: [], maxRepairs: 3 },
-    permission: { userMode: 'manual', phase: 'act', approval: 'ask_writes_and_commands', scope: 'selected_roots', grants: [] }, memoryEnabled: true, documents: [],
+    permission: { userMode: 'manual', phase: 'act', approval: 'ask_writes_and_commands', scope: 'selected_roots', grants: [] }, memoryEnabled: true,
+    webSearch: { enabled: false, hasApiKey: false }, documents: [],
   };
 }
 
@@ -169,6 +170,7 @@ async function startHost(): Promise<Reply<void>> {
     if (!configured.ok) return configured;
   }
   await hostRequest<void>({ type: 'setMemoryEnabled', enabled: store.memoryEnabled });
+  applyWebSearch();
   // 任务列表由 Host 从数据库恢复；只有全新安装（没有任何任务）才创建第一个任务。
   if (!(await hostSnapshot())?.tasks.length) await hostRequest<void>({ type: 'newTask', rootPaths: store.recentRoots });
   await persistRoots();
@@ -430,6 +432,29 @@ handle<void>('desktop:setMemoryEnabled', async (enabled: unknown) => {
   await store.setMemoryEnabled(enabled);
   return hostRequest<void>({ type: 'setMemoryEnabled', enabled });
 });
+
+// 联网搜索配置先落盘（含密钥加密），再把含密钥的运行配置交给 Host；Host 收到后重建下一轮工具表。
+handle<void>('desktop:setWebSearch', async (value: unknown) => {
+  const input = value as Partial<{ enabled: unknown; searchUrl: unknown; apiKeyHeader: unknown; apiKey: unknown; removeKey: unknown }> | undefined;
+  if (!input || typeof input.enabled !== 'boolean') throw new Error('联网搜索设置无效');
+  if (input.searchUrl !== undefined && typeof input.searchUrl !== 'string') throw new Error('搜索接口地址无效');
+  if (input.apiKeyHeader !== undefined && typeof input.apiKeyHeader !== 'string') throw new Error('密钥请求头名称无效');
+  await store.saveWebSearch({
+    enabled: input.enabled,
+    searchUrl: input.searchUrl,
+    apiKeyHeader: input.apiKeyHeader,
+    keyChange: input.removeKey === true ? { action: 'remove' }
+      : typeof input.apiKey === 'string' && input.apiKey ? { action: 'replace', value: input.apiKey }
+        : { action: 'keep' },
+  });
+  applyWebSearch();
+  return { ok: true, value: undefined };
+});
+
+async function applyWebSearch(): Promise<void> {
+  const saved = store.webSearch;
+  await hostRequest<void>({ type: 'setWebSearch', config: { enabled: saved.enabled, searchUrl: saved.searchUrl, apiKeyHeader: saved.apiKeyHeader, apiKey: await store.webSearchKey() } });
+}
 handle<void>('desktop:reloadMcp', async () => {
   desktopError = undefined;
   return loadMcp();

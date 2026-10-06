@@ -12,10 +12,16 @@ type Props = {
   onCancel: () => void;
 };
 
-const blank = { name: '', provider: '', baseUrl: '', modelId: '', contextWindow: 32000, maxOutputTokens: 2048, vision: false };
+const blank = { name: '', provider: '', baseUrl: '', modelId: '', contextWindow: 32000, maxOutputTokens: 2048, reasoning: false as ModelInput['reasoning'], vision: false };
 const draftOf = (profile?: ModelProfile) => profile
-  ? { name: profile.name, provider: profile.provider, baseUrl: profile.baseUrl, modelId: profile.modelId, contextWindow: profile.contextWindow, maxOutputTokens: profile.maxOutputTokens, vision: profile.vision }
+  ? { name: profile.name, provider: profile.provider, baseUrl: profile.baseUrl, modelId: profile.modelId, contextWindow: profile.contextWindow, maxOutputTokens: profile.maxOutputTokens, reasoning: profile.reasoning, vision: profile.vision }
   : blank;
+const REASONING_OPTIONS: { value: ModelInput['reasoning']; label: string }[] = [
+  { value: false, label: '关闭' },
+  { value: 'low', label: '低' },
+  { value: 'medium', label: '中' },
+  { value: 'high', label: '高' },
+];
 
 export function ModelSettings({ model, models, active, onClose, onSave, onDelete, onTest, onCancel }: Props) {
   const [editingId, setEditingId] = useState(model?.id ?? 'new');
@@ -50,7 +56,7 @@ export function ModelSettings({ model, models, active, onClose, onSave, onDelete
     const keyChange: KeyChange = removeKey ? { action: 'remove' }
       : reuseId ? { action: 'copy', fromId: reuseId }
         : apiKey ? { action: 'replace', value: apiKey } : { action: 'keep' };
-    const reply = await onSave({ id: editingId === 'new' ? crypto.randomUUID() : editingId, api: 'openai-completions', reasoning: false, ...draft }, keyChange);
+    const reply = await onSave({ id: editingId === 'new' ? crypto.randomUUID() : editingId, api: 'openai-completions', ...draft }, keyChange);
     if (reply.ok) {
       setEditingId(reply.value.id);
       setDraft(draftOf(reply.value));
@@ -128,6 +134,12 @@ export function ModelSettings({ model, models, active, onClose, onSave, onDelete
                 <label>上下文预算<input type="number" min="1" value={draft.contextWindow} onChange={event => change({ contextWindow: Number(event.target.value) })} disabled={active} /></label>
                 <label>输出预算<input type="number" min="1" value={draft.maxOutputTokens} onChange={event => change({ maxOutputTokens: Number(event.target.value) })} disabled={active} /></label>
               </div>
+              <label className="checkbox-label">思考强度
+                <select value={String(draft.reasoning)} onChange={event => change({ reasoning: event.target.value === 'false' ? false : event.target.value as ModelInput['reasoning'] })} disabled={active} aria-label="思考强度">
+                  {REASONING_OPTIONS.map(option => <option key={String(option.value)} value={String(option.value)}>{option.label}</option>)}
+                </select>
+              </label>
+              <small className="field-hint">将随请求发送给端点（DeepSeek 官方端点发送 thinking 与 reasoning_effort，其他 OpenAI 兼容端点发送 reasoning_effort）；端点不支持时会报错，不会伪装生效。</small>
               <label className="checkbox-label"><input type="checkbox" checked={draft.vision} onChange={event => change({ vision: event.target.checked })} disabled={active} />支持图像输入</label>
             </details>
             {message && <p className={`settings-message ${message.ok ? 'ok' : ''}`} role={message.ok ? 'status' : 'alert'}>{message.text}</p>}

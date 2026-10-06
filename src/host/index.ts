@@ -116,6 +116,9 @@ process.parentPort?.on('message', async ({ data }: { data: HostRequest }) => {
         case 'setMemoryEnabled':
           reply = ok(runtime.setMemoryEnabled(command.enabled));
           break;
+        case 'setWebSearch':
+          reply = ok(runtime.setWebSearch(command.config));
+          break;
         case 'setMcpServers':
           reply = ok(await runtime.setMcpServers(command.servers));
           break;
