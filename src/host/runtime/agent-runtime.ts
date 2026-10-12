@@ -59,6 +59,7 @@ import * as delivery from '../workspace/delivery.js';
 import * as git from '../workspace/git.js';
 import { openRoot, readWorkspaceRules } from '../workspace/workspace.js';
 import { compactIfNeeded, type CompactionOutcome } from './compaction.js';
+import { DEFAULT_POLICY, type HarnessPolicy } from './policy.js';
 import { Ledger, type TaskRecord } from './ledger.js';
 import { recoveryBrief, repairDanglingToolCalls, unknownCalls, type RootRecovery } from './recovery.js';
 import { rebuildTimeline } from './timeline.js';
@@ -131,6 +132,8 @@ export class AgentRuntime {
   private navigationEnabled = true;
   /** 联网搜索配置；未配置时 web 工具不存在，评测环境从不配置。 */
   private webSearch?: WebSearchRuntimeConfig;
+  /** Harness 策略包（经验手册 + 白名单参数）；默认策略不改变任何行为。 */
+  private policy: HarnessPolicy = DEFAULT_POLICY;
   private readonly broker = new ApprovalBroker();
   private readonly mcp: McpManager;
   private readonly sandbox?: SandboxRunner;
@@ -384,6 +387,11 @@ export class AgentRuntime {
 
   // ---- 记忆管理 ----
 
+  setPolicy(policy: HarnessPolicy): void {
+    this.assertIdle();
+    this.policy = policy;
+  }
+
   setNavigationEnabled(enabled: boolean): void {
     this.assertIdle();
     this.navigationEnabled = enabled;
@@ -536,7 +544,7 @@ export class AgentRuntime {
         modelId: profile?.modelId, permission: task.permission, sandboxStatus: this.sandboxStatus(),
         roots: task.roots.map(({ id, alias, path }) => ({ id, alias, path })),
         toolNames: tools.map(tool => tool.name), ruleSources: rules.sources, userTextPreview: text.slice(0, 200),
-        trigger: resumedFrom ? 'recovery' : 'user', ...(resumedFrom ? { resumedFrom } : {}),
+        trigger: resumedFrom ? 'recovery' : 'user', ...(resumedFrom ? { resumedFrom } : {}), policyId: this.policy.id,
       });
       const startTrees = mode !== 'plan' ? await this.snapshotRoots(task, runId, 'run_start') : new Map<string, string>();
       const mutationsAtStart = new Map(task.mutations);
@@ -850,6 +858,7 @@ ${this.stateBlock(task)}`,
         includeEdit: mode !== 'plan',
         includeShell: mode !== 'plan',
         vision: this.profile?.vision === true,
+        shellMaxTimeoutSec: this.policy.params.shellMaxTimeoutSec,
         onStarted: (toolCallId, root) => this.markToolRunning(task, toolCallId, root),
         runnerOf: toolCallId => this.runners.get(toolCallId) ?? 'direct',
       }),
@@ -1401,7 +1410,10 @@ ${roots || '（未选择目录）'}
 2. 测试契约：测试是行为契约，测试失败首先当作源码问题对待。不要为了让测试通过而修改或删除已有测试、放宽断言或改写期望值；除非任务明确要求，交付的改动不包含对任何测试文件的改动（也不要新增测试文件）。
 3. 验证闭环：修改完成后，先从仓库的构建配置（package.json、Makefile、Cargo.toml、go.mod、pom.xml、CMakeLists.txt 等）识别真实的构建/测试入口，运行与本次改动最相关的最小子集。因环境原因（依赖缺失、权限拒绝、工具链不可用）无法运行时，同一目标最多尝试 2 次即降级为替代验证：复核改动上下文、用 git diff 自查、或在系统临时目录自建最小验证脚本（验证后删除，不留在工作区）。
 4. 成本纪律：命令设置合理超时（常用 30–300 秒），不要让长命令阻塞整个任务；同一命令失败后不要原样重跑；探索阶段用复合命令一次获取多项信息，避免对同一文件反复读取。
-5. 交付自查：结束前用 git status/diff 核对改动范围，确认没有混入临时文件、调试脚本或无关产物。最终回复如实说明：做了什么、哪些验证已通过、哪些验证无法执行及原因；验证不完整的部分不得声称完成。`;
+5. 交付自查：结束前用 git status/diff 核对改动范围，确认没有混入临时文件、调试脚本或无关产物。最终回复如实说明：做了什么、哪些验证已通过、哪些验证无法执行及原因；验证不完整的部分不得声称完成。${this.policy.playbook ? `
+
+## 经验手册（从历史任务轨迹总结）
+${this.policy.playbook}` : ''}`;
   }
 
   private createModel(profile: ModelInput): Model<'openai-completions'> {

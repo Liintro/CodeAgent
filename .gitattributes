@@ -3,3 +3,5 @@
 *.docx binary
 *.png binary
 *.jpg binary
+# Batch 6 bench tasks: gold.patch must apply to the workspace files byte for byte.
+tests/eval/rsi/tasks/** text eol=lf
