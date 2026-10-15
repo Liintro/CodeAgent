@@ -2,7 +2,7 @@
 // 一个策略包目录 = params.json（白名单参数）+ playbook.md（追加到系统提示的经验手册）+ 可选 manifest.json（谱系元数据，不参与身份）。
 // 身份 policyId 只由生效内容（参数 + 手册）决定：内容相同的两个包就是同一个策略。
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
 
@@ -27,8 +27,14 @@ export function createPolicy(params: unknown, playbook: string): HarnessPolicy {
   return { id: createHash('sha256').update(canonical).digest('hex').slice(0, 12), playbook: text, params: parsed };
 }
 
-export async function loadPolicy(dir: string): Promise<HarnessPolicy> {
-  const params = JSON.parse(await readFile(join(dir, 'params.json'), 'utf8'));
-  const playbook = await readFile(join(dir, 'playbook.md'), 'utf8').catch(() => '');
-  return createPolicy(params, playbook);
+export function loadPolicy(dir: string): HarnessPolicy {
+  const params = JSON.parse(readFileSync(join(dir, 'params.json'), 'utf8'));
+  const playbookFile = join(dir, 'playbook.md');
+  return createPolicy(params, existsSync(playbookFile) ? readFileSync(playbookFile, 'utf8') : '');
+}
+
+/** 仅供评测：CODEAGENT_POLICY_DIR 指向策略包时 Runtime 以它为初始策略；无效的包在启动时直接报错。 */
+export function initialPolicy(): HarnessPolicy {
+  const dir = process.env.CODEAGENT_POLICY_DIR;
+  return dir ? loadPolicy(dir) : DEFAULT_POLICY;
 }

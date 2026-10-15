@@ -59,7 +59,7 @@ import * as delivery from '../workspace/delivery.js';
 import * as git from '../workspace/git.js';
 import { openRoot, readWorkspaceRules } from '../workspace/workspace.js';
 import { compactIfNeeded, type CompactionOutcome } from './compaction.js';
-import { DEFAULT_POLICY, type HarnessPolicy } from './policy.js';
+import { initialPolicy, type HarnessPolicy } from './policy.js';
 import { Ledger, type TaskRecord } from './ledger.js';
 import { recoveryBrief, repairDanglingToolCalls, unknownCalls, type RootRecovery } from './recovery.js';
 import { rebuildTimeline } from './timeline.js';
@@ -133,7 +133,7 @@ export class AgentRuntime {
   /** 联网搜索配置；未配置时 web 工具不存在，评测环境从不配置。 */
   private webSearch?: WebSearchRuntimeConfig;
   /** Harness 策略包（经验手册 + 白名单参数）；默认策略不改变任何行为。 */
-  private policy: HarnessPolicy = DEFAULT_POLICY;
+  private policy: HarnessPolicy = initialPolicy();
   private readonly broker = new ApprovalBroker();
   private readonly mcp: McpManager;
   private readonly sandbox?: SandboxRunner;
