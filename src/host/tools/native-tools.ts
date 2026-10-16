@@ -22,6 +22,8 @@ export type ToolContext = {
   includeEdit: boolean;
   /** 当前模型接受图像输入；否则拒绝读取图片，而不是让模型假装看过。 */
   vision: boolean;
+  /** 策略包的 shell 超时上限（秒）；未设置时沿用模型请求的超时。 */
+  shellMaxTimeoutSec?: number;
 };
 
 export function createRootTools(ctx: ToolContext): AgentTool<any>[] {
@@ -82,6 +84,8 @@ function shellTool(ctx: ToolContext): AgentTool<any> {
     parameters: withRootParameter(base.parameters, ctx),
     execute: async (toolCallId, params: any, signal, onUpdate) => {
       const { root: alias, ...rest } = params;
+      // PowerShell 工具没有默认超时：不设超时的请求同样受上限约束。
+      if (ctx.shellMaxTimeoutSec) rest.timeout = Math.min(rest.timeout ?? ctx.shellMaxTimeoutSec, ctx.shellMaxTimeoutSec);
       const root = pickRoot(ctx, alias);
       const runner = ctx.runnerOf(toolCallId);
       ctx.onStarted(toolCallId, root);
