@@ -2,7 +2,7 @@
 
 CodeAgent 是面向 Windows 的中文 AI 编程工作台，用于在本地代码库中完成修改、验证和交付。选择项目目录并描述任务后，Agent 可以搜索代码、读取技术文档、编辑文件并运行测试。你可以在工作台审批工具调用、查看失败原因和 Git 差异，再决定保留、恢复或提交改动。
 
-![CodeAgent 主界面，展示项目任务和文档工具的执行记录](docs/workbench.png)
+![CodeAgent 主界面，展示代码修改、自动修复、测试验收和 Git 交付](docs/workbench.png)
 
 ## 能力
 
