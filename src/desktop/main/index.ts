@@ -541,14 +541,18 @@ app.whenReady().then(async () => {
   mcpConfig = new McpConfig(app.getPath('userData'));
   currentModel = undefined;
   currentModels = [];
+  let settingsError: AppError | undefined;
   try {
     await store.load();
-    currentModel = store.model;
-    currentModels = store.models;
   } catch (error) {
-    desktopError = { code: 'SETTINGS_INVALID', message: error instanceof Error ? error.message : String(error) };
+    settingsError = { code: 'SETTINGS_INVALID', message: error instanceof Error ? error.message : String(error) };
+    desktopError = settingsError;
   }
+  currentModel = store.model;
+  currentModels = store.models;
   await startHost();
+  // 启动时应用模型会清空错误；配置警告需要在 Host 就绪后仍然可见。
+  desktopError ??= settingsError;
   await createWindow();
 });
 
