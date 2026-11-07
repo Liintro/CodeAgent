@@ -30,6 +30,7 @@ export function ModelSettings({ model, models, active, onClose, onSave, onDelete
   const [keySource, setKeySource] = useState<string>();
   const [removeKey, setRemoveKey] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmClose, setConfirmClose] = useState(false);
   const [busy, setBusy] = useState<'save' | 'delete' | 'test'>();
   const [message, setMessage] = useState<{ text: string; ok: boolean }>();
   const [testResult, setTestResult] = useState('');
@@ -38,6 +39,16 @@ export function ModelSettings({ model, models, active, onClose, onSave, onDelete
   // 新配置可以沿用已保存的密钥；Base URL 与某个已保存配置相同时默认沿用它。
   const donors = models.filter(item => item.hasApiKey && item.id !== editingId);
   const reuseId = editing?.hasApiKey ? '' : keySource ?? donors.find(item => item.baseUrl === draft.baseUrl)?.id ?? '';
+  const dirty = Boolean(apiKey) || removeKey || keySource !== undefined || JSON.stringify(draft) !== JSON.stringify(draftOf(editing));
+
+  function close() {
+    if (dirty && !confirmClose) {
+      setConfirmClose(true);
+      setMessage({ text: '有未保存的修改，再次关闭将放弃', ok: false });
+      return;
+    }
+    onClose();
+  }
 
   function loadProfile(id: string) {
     setEditingId(id);
@@ -46,6 +57,7 @@ export function ModelSettings({ model, models, active, onClose, onSave, onDelete
     setKeySource(undefined);
     setRemoveKey(false);
     setConfirmDelete(false);
+    setConfirmClose(false);
     setMessage(undefined);
     setTestResult('');
   }
@@ -63,6 +75,7 @@ export function ModelSettings({ model, models, active, onClose, onSave, onDelete
       setApiKey('');
       setKeySource(undefined);
       setRemoveKey(false);
+      setConfirmClose(false);
       setTestResult('');
       setMessage({ text: `设置已保存，当前使用「${reply.value.name}」`, ok: true });
     } else setMessage({ text: reply.error.message, ok: false });
@@ -93,12 +106,12 @@ export function ModelSettings({ model, models, active, onClose, onSave, onDelete
 
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={event => {
-      if (event.target === event.currentTarget && !active) onClose();
+      if (event.target === event.currentTarget && !active) close();
     }}>
       <section className="modal model-modal" role="dialog" aria-modal="true" aria-label="模型设置">
         <header className="modal-header">
           <h2>模型设置</h2>
-          <button className="icon-button" aria-label="关闭" onClick={onClose}>×</button>
+          <button className="icon-button" aria-label="关闭" onClick={close}>×</button>
         </header>
         <div className="model-layout">
           <nav className="model-list" aria-label="已保存的模型">
@@ -154,7 +167,7 @@ export function ModelSettings({ model, models, active, onClose, onSave, onDelete
             </div>
           )}
           <div>
-            <button className="secondary" onClick={onClose}>关闭</button>
+            <button className="secondary" onClick={close}>关闭</button>
             <button className="primary" onClick={save} disabled={active || Boolean(busy)}>{busy === 'save' ? '保存中…' : '保存'}</button>
           </div>
         </footer>

@@ -50,6 +50,15 @@ export function validateModelInput(value: unknown): ModelInput {
   };
 }
 
+function parseStoredModel(item: unknown): StoredModel[] {
+  try {
+    const encryptedApiKey = (item as Record<string, unknown>).encryptedApiKey;
+    return [{ ...validateModelInput(item), encryptedApiKey: typeof encryptedApiKey === 'string' ? encryptedApiKey : undefined }];
+  } catch {
+    return [];
+  }
+}
+
 export class SettingsStore {
   private readonly file: string;
   private settings: Settings = { models: [], recentRoots: [], sandboxGrants: [] };
@@ -59,13 +68,12 @@ export class SettingsStore {
   }
 
   async load(): Promise<void> {
+    let skipped = 0;
     try {
       const value = JSON.parse(await readFile(this.file, 'utf8')) as Record<string, unknown>;
-      const storedModels = Array.isArray(value.models) ? value.models : value.model ? [value.model] : [];
-      const models = storedModels.map(item => ({
-        ...validateModelInput(item),
-        encryptedApiKey: typeof (item as Record<string, unknown>).encryptedApiKey === 'string' ? (item as Record<string, unknown>).encryptedApiKey as string : undefined,
-      }));
+      const storedModels: unknown[] = Array.isArray(value.models) ? value.models : value.model ? [value.model] : [];
+      const models = storedModels.flatMap(parseStoredModel);
+      skipped = storedModels.length - models.length;
       const requestedActive = typeof value.activeModelId === 'string' ? value.activeModelId : undefined;
       const rawWeb = (value.webSearch ?? {}) as Record<string, unknown>;
       this.settings = {
@@ -90,6 +98,11 @@ export class SettingsStore {
       // 之后的任何保存都会覆盖该文件，先留一份备份以便找回已保存的模型与密钥。
       await copyFile(this.file, `${this.file}.bak`).catch(() => undefined);
       throw new Error('配置文件损坏，已备份为 settings.json.bak，请重新保存模型配置', { cause: error });
+    }
+    if (skipped) {
+      // 有效的模型照常加载；下次保存会丢掉无效条目，所以先备份原文件。
+      await copyFile(this.file, `${this.file}.bak`).catch(() => undefined);
+      throw new Error(`${skipped} 个模型配置无效已跳过，原配置已备份为 settings.json.bak`);
     }
   }
 
