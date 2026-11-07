@@ -12,7 +12,11 @@ CodeAgent 是面向 Windows 的中文 AI 编程工作台，用于在本地代码
 - **项目记忆与文档**：检索项目范围内的历史经验。支持读取 PDF、DOCX、Markdown、文本及其他项目参考资料，视觉模型可查看扫描页和图像。
 - **模型配置**：支持多组 OpenAI Chat Completions 兼容端点配置，API Key 通过 Electron 的系统加密接口保存在本机。
 
-## 本地运行
+## Windows 下载
+
+在 [GitHub Releases](https://github.com/Liintro/CodeAgent/releases/latest) 下载 Windows x64 版 `CodeAgent-*-windows-x64.exe`，双击即可启动。应用自带运行环境。执行编程任务前，在模型设置中填写可用的模型端点和 API Key。
+
+## 从源码运行
 
 需要 Windows x64、Node.js 22.19.0 或更高版本、npm、Git，以及 Windows 自带的 64 位 .NET Framework C# 编译器。运行实际编程任务还需要一个可用的模型端点。项目验证命令使用工作区所需的语言工具链。
 

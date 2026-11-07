@@ -15,3 +15,5 @@ files:
 win:
   target:
     - dir
+portable:
+  artifactName: CodeAgent-${version}-windows-${arch}.exe
