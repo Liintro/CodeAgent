@@ -8,8 +8,6 @@ import type { PowerShellOperations } from '@earendil-works/pi-coding-agent';
 import type { SandboxStatus } from '../../shared/contracts.js';
 
 const UTF8_OUTPUT_PREFIX = 'try { [Console]::OutputEncoding=[System.Text.Encoding]::UTF8 } catch {}\n';
-// 控制台、NUL 等设备对象只向 Everyone 授予写权限，所以必须保留；它也会放行 Everyone 可写的文件，这部分由 helper 的 Low 完整性令牌拦截。
-const RESTRICTING_SIDS = ['S-1-1-0', 'S-1-5-12'];
 
 export class SandboxRunner {
   readonly capSid: string;
@@ -39,15 +37,20 @@ export class SandboxRunner {
       const shell = findPowerShell();
       const attempt = (name: string) => `try { Set-Content -LiteralPath '${quote(join(outside, name))}' -Value x -ErrorAction Stop } catch {}`;
       const encodedChild = Buffer.from(attempt('child.txt'), 'utf16le').toString('base64');
+      // 注册表主体（HKCU\Software）同样必须写不进去；AppDataLow 是 Low 令牌的已知例外，不在此列。
+      const registryKey = `HKCU\\Software\\codeagent-sbx-${process.pid}-${Date.now()}`;
       const script = [
         `Set-Content -LiteralPath '${quote(join(root, 'inside.txt'))}' -Value ok`,
         attempt('parent.txt'),
         `& '${quote(shell)}' -NoProfile -NonInteractive -EncodedCommand ${encodedChild}`,
+        `try { New-Item -Path 'Registry::${quote(registryKey.replace('HKCU', 'HKEY_CURRENT_USER'))}' -ErrorAction Stop | Out-Null } catch {}`,
         'exit 0',
       ].join('; ');
       const result = await this.run(script, root);
       const exists = (path: string) => access(path).then(() => true, () => false);
-      const ok = result.exitCode === 0 && await exists(join(root, 'inside.txt'))
+      const registryWritten = await helper('reg', ['query', registryKey]).then(() => true, () => false);
+      if (registryWritten) await helper('reg', ['delete', registryKey, '/f']).catch(() => undefined);
+      const ok = result.exitCode === 0 && await exists(join(root, 'inside.txt')) && !registryWritten
         && !await exists(join(outside, 'parent.txt')) && !await exists(join(outside, 'child.txt'));
       this.status = ok ? 'available' : 'failed';
       this.detail = ok ? undefined : `自检未通过（退出码 ${result.exitCode}）：${result.output.slice(0, 300)}`;
@@ -128,9 +131,8 @@ export class SandboxRunner {
     // --parent：Host 退出时 helper 终止整个 Job。
     const common = ['--parent', String(process.pid), '--cwd', cwd, '--cmdline', cmdline];
     if (direct) return spawn(this.exe, ['run', '--mode', 'direct', ...common], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env });
-    const restricting = RESTRICTING_SIDS.flatMap(sid => ['--extra-restrict', sid]);
     // PowerShell 在 TEMP 不可写时会静默降级为 ConstrainedLanguage，因此必须指向已授权目录；uv 与 Go 的构建缓存同理。
-    return spawn(this.exe, ['run', '--cap', this.capSid, ...restricting, ...common], {
+    return spawn(this.exe, ['run', '--cap', this.capSid, ...common], {
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
       env: { ...env, TEMP: this.tempDir, TMP: this.tempDir, UV_CACHE_DIR: join(this.tempDir, 'uv-cache'), GOCACHE: join(this.tempDir, 'go-build') },

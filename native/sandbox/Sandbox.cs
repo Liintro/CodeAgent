@@ -1,14 +1,17 @@
-// Windows write-restricted token runner, compiled with the in-box .NET Framework csc (C# 5).
-//   run    --cap <SID> [--extra-restrict <SID>]... --cwd <dir> --cmdline <command line> [--parent <pid>]
+// Windows Low-integrity token runner, compiled with the in-box .NET Framework csc (C# 5).
+//   run    --cap <SID> --cwd <dir> --cmdline <command line> [--parent <pid>]
 //   run    --mode direct --cwd <dir> --cmdline <command line> [--parent <pid>]   (same user token, no restriction)
 // In both modes the command runs inside a kill-on-close Job Object, and the job is terminated when the command
 // exits or when the --parent process (the Agent Host) exits, so a killed Host cannot leave a shell tree behind.
 //   grant  --cap <SID> --path <dir>
 //   revoke --cap <SID> --path <dir>
-// A restricted command runs at Low integrity. Everyone has to stay a restricting SID because device objects such as NUL
-// and the console grant write access only to Everyone, and that alone would also open every Everyone-writable file.
-// Mandatory integrity closes the gap: a Low token cannot write a file without a Low label, whatever its DACL says, so a
-// grant is the capability ACE plus an inheritable Low label, and revoke removes both.
+// A restricted command runs with every privilege removed at Low integrity: a Low token cannot write any object without a
+// Low label, whatever its DACL says, so a grant is an inheritable Low label (plus a capability ACE that marks the grant
+// for revoke), and revoke removes both.
+// The token is deliberately not WRITE_RESTRICTED. Restricting SIDs would also have to pass for every write, and the
+// default DACLs of named pipes (Everyone: read, owner: full) and of BaseNamedObjects grant them nothing, so Node child
+// processes with stdio pipes and rustc's named jobserver semaphore failed with access denied. The cost is that Low
+// processes may write Low-labelled locations the user owns: %USERPROFILE%\AppData\LocalLow and HKCU\Software\AppDataLow.
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -21,7 +24,7 @@ using System.Text.RegularExpressions;
 
 static class Native
 {
-    public const uint DISABLE_MAX_PRIVILEGE = 0x1, WRITE_RESTRICTED = 0x8;
+    public const uint DISABLE_MAX_PRIVILEGE = 0x1;
     public const uint TOKEN_ASSIGN_PRIMARY = 0x1, TOKEN_DUPLICATE = 0x2, TOKEN_QUERY = 0x8, TOKEN_ADJUST_DEFAULT = 0x80;
     public const uint SYNCHRONIZE = 0x00100000;
     public const uint CREATE_SUSPENDED = 0x4, CREATE_NO_WINDOW = 0x08000000;
@@ -29,7 +32,7 @@ static class Native
     public const int JobObjectExtendedLimitInformation = 9;
     public const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000;
     public const int STD_INPUT_HANDLE = -10, STD_OUTPUT_HANDLE = -11, STD_ERROR_HANDLE = -12;
-    public const int TokenDefaultDacl = 6, TokenIntegrityLevel = 25, SE_FILE_OBJECT = 1;
+    public const int TokenIntegrityLevel = 25, SE_FILE_OBJECT = 1;
     public const uint SE_GROUP_INTEGRITY = 0x20, LABEL_SECURITY_INFORMATION = 0x10, DACL_SECURITY_INFORMATION = 0x4;
     public const uint PROTECTED_DACL_SECURITY_INFORMATION = 0x80000000, UNPROTECTED_DACL_SECURITY_INFORMATION = 0x20000000;
 
@@ -263,23 +266,8 @@ static class Program
         IntPtr token = own;
         if (!direct)
         {
-            string cap = One(o, "--cap");
-            var restrict = new List<string>(); restrict.Add(cap);
-            List<string> extra; if (o.TryGetValue("--extra-restrict", out extra)) restrict.AddRange(extra);
-            var sids = new Native.SID_AND_ATTRIBUTES[restrict.Count];
-            for (int i = 0; i < sids.Length; i++) sids[i].Sid = Sid(restrict[i]);
-            if (!Native.CreateRestrictedToken(own, Native.DISABLE_MAX_PRIVILEGE | Native.WRITE_RESTRICTED, 0, IntPtr.Zero, 0, IntPtr.Zero, (uint)sids.Length, sids, out token))
+            if (!Native.CreateRestrictedToken(own, Native.DISABLE_MAX_PRIVILEGE, 0, IntPtr.Zero, 0, IntPtr.Zero, 0, null, out token))
                 throw new Win32Exception();
-
-            // Objects the child creates (pipes, events) must be openable by the restricting SID too.
-            var dacl = new DiscretionaryAcl(false, false, 3);
-            dacl.AddAccess(AccessControlType.Allow, new SecurityIdentifier(cap), 0x10000000, InheritanceFlags.None, PropagationFlags.None);
-            dacl.AddAccess(AccessControlType.Allow, WindowsIdentity.GetCurrent().User, 0x10000000, InheritanceFlags.None, PropagationFlags.None);
-            dacl.AddAccess(AccessControlType.Allow, new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null), 0x10000000, InheritanceFlags.None, PropagationFlags.None);
-            byte[] bin = new byte[dacl.BinaryLength]; dacl.GetBinaryForm(bin, 0);
-            IntPtr aclMem = Marshal.AllocHGlobal(bin.Length); Marshal.Copy(bin, 0, aclMem, bin.Length);
-            IntPtr info = Marshal.AllocHGlobal(IntPtr.Size); Marshal.WriteIntPtr(info, aclMem);
-            if (!Native.SetTokenInformation(token, Native.TokenDefaultDacl, info, IntPtr.Size)) throw new Win32Exception();
 
             var low = new Native.SID_AND_ATTRIBUTES { Sid = Sid("S-1-16-4096"), Attributes = Native.SE_GROUP_INTEGRITY };
             int labelSize = Marshal.SizeOf(low);
