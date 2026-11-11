@@ -223,6 +223,36 @@ export class AgentRuntime {
     void this.restoreViews(task);
   }
 
+  renameTask(taskId: string, title: string): void {
+    const task = this.tasks.find(item => item.id === taskId);
+    if (!task) throw new Error('任务不存在');
+    task.title = title;
+    this.save(task);
+    this.emitSnapshot();
+  }
+
+  async deleteTask(taskId: string): Promise<void> {
+    this.assertIdle();
+    const task = this.tasks.find(item => item.id === taskId);
+    if (!task) throw new Error('任务不存在');
+    this.tasks = this.tasks.filter(item => item.id !== taskId);
+    this.ledger.archiveTask(taskId);
+    for (const root of task.roots) {
+      if (root.sandboxGranted && !this.tasks.some(item => item.roots.some(other => other.path === root.path && other.sandboxGranted))) {
+        await this.sandbox?.revoke(root.path).catch(() => undefined);
+      }
+    }
+    if (this.taskId === taskId) {
+      const next = [...this.tasks].sort((a, b) => b.updatedAt - a.updatedAt)[0];
+      if (next) {
+        this.load(next);
+        this.taskId = next.id;
+        void this.restoreViews(next);
+      } else this.createTask([]);
+    }
+    this.emitSnapshot();
+  }
+
   async addRoot(path: string, grantSandbox = false): Promise<RootView> {
     this.assertIdle();
     const task = this.ensureTask();

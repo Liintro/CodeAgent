@@ -142,6 +142,11 @@ export class Ledger {
     task.roots.forEach((root, position) => insert.run(task.id, root.id, root.alias, root.path, position, root.gitRoot ?? null));
   }
 
+  // 删除只做归档：运行记录、记忆引用与交付证据仍然保留，listTasks 不再返回它。
+  archiveTask(taskId: string): void {
+    this.db.prepare('UPDATE task SET archived = 1 WHERE id = ?').run(taskId);
+  }
+
   listTasks(): TaskRecord[] {
     const roots = this.db.prepare('SELECT * FROM task_root ORDER BY task_id, position').all() as Record<string, any>[];
     return (this.db.prepare('SELECT * FROM task WHERE archived = 0 ORDER BY updated_at DESC').all() as Record<string, any>[]).map(row => ({

@@ -2,13 +2,26 @@ import { randomUUID } from 'node:crypto';
 import { copyFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { safeStorage } from 'electron';
-import type { KeyChange, ModelInput, ModelProfile, ThinkingLevel } from '../../shared/contracts.js';
+import type { KeyChange, ModelInput, ModelProfile, Preferences, ThinkingLevel } from '../../shared/contracts.js';
 
 type StoredModel = ModelInput & { encryptedApiKey?: string };
 type Settings = {
   models: StoredModel[]; activeModelId?: string; recentRoots: string[]; sandboxGrants: string[]; memoryEnabled?: boolean;
-  webSearch?: WebSearchSettings;
+  webSearch?: WebSearchSettings; preferences?: Preferences;
 };
+
+// 完成类提醒默认只在应用内显示；需要处理与错误默认发系统通知。
+export const DEFAULT_PREFERENCES: Preferences = { theme: 'system', notify: { action: true, done: false, error: true } };
+
+export function validatePreferences(value: unknown): Preferences {
+  const input = (value ?? {}) as Partial<Preferences>;
+  const notify = (input.notify ?? {}) as Partial<Preferences['notify']>;
+  const flag = (name: keyof Preferences['notify']) => typeof notify[name] === 'boolean' ? notify[name] : DEFAULT_PREFERENCES.notify[name];
+  return {
+    theme: input.theme === 'light' || input.theme === 'dark' ? input.theme : 'system',
+    notify: { action: flag('action'), done: flag('done'), error: flag('error') },
+  };
+}
 /** 联网搜索配置；enabled 默认 false，评测环境从不开启。 */
 export type WebSearchSettings = { enabled: boolean; searchUrl?: string; apiKeyHeader?: string; encryptedApiKey?: string };
 
@@ -85,6 +98,7 @@ export class SettingsStore {
           : typeof value.lastRootPath === 'string' ? [value.lastRootPath] : [],
         sandboxGrants: Array.isArray(value.sandboxGrants) ? value.sandboxGrants.filter((item): item is string => typeof item === 'string') : [],
         memoryEnabled: value.memoryEnabled === false ? false : undefined,
+        preferences: validatePreferences(value.preferences),
         webSearch: {
           enabled: rawWeb.enabled === true,
           ...(typeof rawWeb.searchUrl === 'string' && rawWeb.searchUrl ? { searchUrl: rawWeb.searchUrl } : {}),
@@ -224,6 +238,17 @@ export class SettingsStore {
     } catch {
       return { error: 'API Key 解密失败，请重新输入' };
     }
+  }
+
+  get preferences(): Preferences {
+    return this.settings.preferences ?? DEFAULT_PREFERENCES;
+  }
+
+  async savePreferences(value: unknown): Promise<Preferences> {
+    const preferences = validatePreferences(value);
+    this.settings = { ...this.settings, preferences };
+    await this.persist(this.settings);
+    return preferences;
   }
 
   get sandboxGrants(): string[] {

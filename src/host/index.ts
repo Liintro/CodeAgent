@@ -41,6 +41,12 @@ process.parentPort?.on('message', async ({ data }: { data: HostRequest }) => {
         case 'selectTask':
           reply = ok(runtime.selectTask(command.taskId));
           break;
+        case 'renameTask':
+          reply = ok(runtime.renameTask(command.taskId, command.title));
+          break;
+        case 'deleteTask':
+          reply = ok(await runtime.deleteTask(command.taskId));
+          break;
         case 'addRoot':
           reply = ok(await runtime.addRoot(command.path, command.grantSandbox));
           break;
