@@ -5,7 +5,7 @@ const NO_TEST = /no test specified/;
 
 export const node: Adapter = {
   id: 'node',
-  async detect(root, sandboxed) {
+  async detect(root) {
     const manifest = readJson(join(root, 'package.json'));
     if (!manifest) return [];
     const manager = has(root, 'pnpm-lock.yaml') ? 'pnpm' : has(root, 'yarn.lock') ? 'yarn' : 'npm';
@@ -24,16 +24,13 @@ export const node: Adapter = {
       found.push({ label: `${manager} test`, command: run('test'), timeoutSeconds: 900, toolchain, problem });
       return found;
     }
-    // 没有 test 脚本时按已安装的工具推断；node --test 不带目录参数（Node 24 把目录当作模块路径解析而失败），
-    // 沙箱里不能为每个测试文件创建带管道的子进程，改为在同一进程内运行。
+    // 没有 test 脚本时按已安装的工具推断；node --test 不带目录参数（Node 24 把目录当作模块路径解析而失败）。
     if (!scripts.typecheck && !scripts.build && deps.typescript && has(root, 'tsconfig.json')) found.push({ label: 'TypeScript 类型检查', command: 'npx tsc --noEmit', timeoutSeconds: 600, toolchain, problem });
     if (deps.vitest) found.push({ label: 'Vitest 测试', command: 'npx vitest run', timeoutSeconds: 900, toolchain, problem });
     else if (deps.jest) found.push({ label: 'Jest 测试', command: 'npx jest', timeoutSeconds: 900, toolchain, problem });
-    else if (hasNodeTests(root)) found.push({ label: 'node:test 测试', command: sandboxed ? 'node --test --test-isolation=none' : 'node --test', timeoutSeconds: 600, toolchain, problem: nodeExe ? undefined : missing('node') });
+    else if (hasNodeTests(root)) found.push({ label: 'node:test 测试', command: 'node --test', timeoutSeconds: 600, toolchain, problem: nodeExe ? undefined : missing('node') });
     return found;
   },
-  // node:test 默认每个文件一个子进程，受限令牌下创建子进程管道被拒绝（实测 EPERM spawn）。
-  sandboxBlocked: { pattern: /code: 'EPERM',\s*syscall: 'spawn'/, reason: 'node:test 在 Auto 沙箱里无法为测试文件创建子进程（EPERM spawn）；可把验收命令改为 node --test --test-isolation=none，或在“接受编辑”模式下运行' },
   parse(output) {
     const tests = [
       // node:test TAP：not ok 2 - formats durations（子测试有缩进）

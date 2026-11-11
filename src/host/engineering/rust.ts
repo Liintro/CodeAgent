@@ -12,8 +12,6 @@ export const rust: Adapter = {
       { label: 'Cargo 测试', command: 'cargo test', timeoutSeconds: 1200, toolchain, problem },
     ];
   },
-  // 受限令牌不能在 BaseNamedObjects 下创建命名对象，rustc 的 jobserver 信号量因此被拒绝（实测）。
-  sandboxBlocked: { pattern: /failed to create jobserver/, reason: 'cargo/rustc 需要创建命名信号量（jobserver），Auto 沙箱的受限令牌不允许，请在“接受编辑”或“手动”模式下由用户批准后运行' },
   parse(output) {
     const tests = matches(output, /^test (\S+) \.\.\. FAILED$/m).map(match => match[1]);
     const diagnostics = [
