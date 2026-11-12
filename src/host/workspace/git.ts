@@ -83,7 +83,21 @@ export async function changes(rootPath: string, baseTree: string, nowTree: strin
 export async function diff(rootPath: string, baseTree: string, nowTree: string, rootId: string, path: string): Promise<DiffView> {
   const patch = await git(rootPath, ['diff', '--find-renames', '--relative', '-U3', baseTree, nowTree, '--', path]);
   const truncated = patch.length > DIFF_LIMIT;
-  return { rootId, path, patch: truncated ? patch.slice(0, DIFF_LIMIT) : patch, truncated };
+  const [original, modified] = await Promise.all([textAt(rootPath, baseTree, path), textAt(rootPath, nowTree, path)]);
+  const sides = original !== null && modified !== null ? { original, modified } : {};
+  return { rootId, path, patch: truncated ? patch.slice(0, DIFF_LIMIT) : patch, truncated, ...sides };
+}
+
+const SIDE_LIMIT = 2 * 1024 * 1024;
+
+// 树中该路径的文本；路径不存在视为空文件，二进制或过大返回 null。
+async function textAt(rootPath: string, tree: string, path: string): Promise<string | null> {
+  const blob = await blobAt(rootPath, tree, path);
+  if (!blob) return '';
+  const size = Number((await git(rootPath, ['cat-file', '-s', blob])).trim());
+  if (size > SIDE_LIMIT) return null;
+  const text = await git(rootPath, ['cat-file', 'blob', blob]);
+  return text.includes(String.fromCharCode(0)) ? null : text;
 }
 
 export type GitReadOp = 'status' | 'diff' | 'log' | 'show';

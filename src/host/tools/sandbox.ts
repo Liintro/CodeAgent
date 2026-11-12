@@ -1,7 +1,7 @@
 import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync } from 'node:fs';
-import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { existsSync, realpathSync } from 'node:fs';
+import { access, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { hostname, tmpdir, userInfo } from 'node:os';
 import { delimiter, join } from 'node:path';
 import type { PowerShellOperations } from '@earendil-works/pi-coding-agent';
@@ -14,7 +14,7 @@ export class SandboxRunner {
   status: SandboxStatus = 'untested';
   detail?: string;
 
-  constructor(private readonly exe: string, private readonly tempDir: string) {
+  constructor(private readonly exe: string, private tempDir: string) {
     const digest = createHash('sha256').update(`CodeAgent|${hostname()}|${userInfo().username}`).digest();
     const parts = [0, 4, 8, 12].map(offset => digest.readUInt32LE(offset));
     this.capSid = `S-1-5-21-${parts.join('-')}`;
@@ -22,10 +22,12 @@ export class SandboxRunner {
 
   // 真实自检：必须先证明同一用户能写到沙箱外（且该目录对 Everyone 可写），再证明受限进程及其子进程被操作系统拒绝。
   async verify(): Promise<SandboxStatus> {
-    const base = await mkdtemp(join(tmpdir(), 'codeagent-sbx-'));
+    // Low 完整性进程无法解析 8.3 短路径（如 TEMP 为 C:\Users\ABCDEF~1\…），交给沙箱的路径一律先换成长路径。
+    const base = await realpath(await mkdtemp(join(tmpdir(), 'codeagent-sbx-')));
     try {
       await access(this.exe);
       await mkdir(this.tempDir, { recursive: true });
+      this.tempDir = await realpath(this.tempDir);
       await this.grant(this.tempDir);
       const root = join(base, 'root');
       const outside = join(base, 'outside');
@@ -129,7 +131,8 @@ export class SandboxRunner {
     const shellArgs = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', command];
     const cmdline = [findPowerShell(), ...shellArgs].map(quoteArg).join(' ');
     // --parent：Host 退出时 helper 终止整个 Job。
-    const common = ['--parent', String(process.pid), '--cwd', cwd, '--cmdline', cmdline];
+    // 只有受限令牌需要长路径；直接运行保持调用方给出的工作目录。
+    const common = ['--parent', String(process.pid), '--cwd', direct ? cwd : longPath(cwd), '--cmdline', cmdline];
     if (direct) return spawn(this.exe, ['run', '--mode', 'direct', ...common], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env });
     // PowerShell 在 TEMP 不可写时会静默降级为 ConstrainedLanguage，因此必须指向已授权目录；uv 与 Go 的构建缓存同理。
     return spawn(this.exe, ['run', '--cap', this.capSid, ...common], {
@@ -160,6 +163,14 @@ function quoteArg(arg: string): string {
     backslashes = 0;
   }
   return `${result}${'\\'.repeat(backslashes * 2)}"`;
+}
+
+function longPath(path: string): string {
+  try {
+    return realpathSync.native(path);
+  } catch {
+    return path;
+  }
 }
 
 function killTree(pid: number): void {

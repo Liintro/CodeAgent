@@ -1,5 +1,9 @@
 {
   "files": [],
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": { "@/*": ["src/desktop/renderer/*"] }
+  },
   "references": [
     { "path": "./tsconfig.node.json" },
     { "path": "./tsconfig.preload.json" },

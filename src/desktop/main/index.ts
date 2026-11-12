@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { appendFile, mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { app, BrowserWindow, dialog, ipcMain, Menu, shell, utilityProcess, type UtilityProcess } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, Notification, shell, utilityProcess, type UtilityProcess } from 'electron';
 import type {
   Acceptance,
   AppError,
@@ -21,7 +21,9 @@ import type {
   MemoryItemView,
   ModelProfile,
   PermissionSetting,
+  Preferences,
   Reply,
+  RunEvent,
   DocumentView,
   RootView,
   SnapshotEnvelope,
@@ -30,6 +32,7 @@ import type {
   WorkbenchSnapshot,
 } from '../../shared/contracts.js';
 import { McpConfig } from './mcp-config.js';
+import { attentionFor, type Attention } from '../../shared/attention.js';
 import { SettingsStore } from './settings.js';
 
 const USER_MODES: UserMode[] = ['plan', 'manual', 'accept_edits', 'auto', 'bypass'];
@@ -70,6 +73,7 @@ function log(message: string): void {
 function broadcast(event: WorkbenchEvent): void {
   localSeq = Math.max(localSeq, event.seq);
   const payload = event.payload;
+  const previous = lastSnapshot;
   if (payload.type === 'snapshot') lastSnapshot = payload.value;
   else if (payload.type === 'run.changed') lastSnapshot = { ...lastSnapshot, run: payload.value };
   else if (payload.type === 'approval.requested') lastSnapshot = { ...lastSnapshot, approval: payload.value };
@@ -79,6 +83,47 @@ function broadcast(event: WorkbenchEvent): void {
   else if (payload.type === 'changes.updated') lastSnapshot = { ...lastSnapshot, changes: payload.value };
   else if (payload.type === 'error') lastSnapshot = { ...lastSnapshot, error: payload.value };
   mainWindow?.webContents.send('desktop:event', event);
+  signal(previous, event);
+}
+
+const notifiedApprovals = new Set<string>();
+
+// 任务栏进度跟随运行状态；窗口不在前台时，按“设置 → 通知”的开关发系统通知并闪烁任务栏。
+function signal(previous: WorkbenchSnapshot, event: WorkbenchEvent): void {
+  if (!mainWindow) return;
+  if (event.payload.type === 'run.changed' || event.payload.type === 'snapshot') {
+    const run = event.payload.type === 'run.changed' ? event.payload.value : event.payload.value.run;
+    mainWindow.setProgressBar(run && BUSY_PHASES.includes(run.phase) ? 2 : -1);
+  }
+  const attention = attentionFor(previous, event);
+  if (!attention) return;
+  if (attention.approvalId) {
+    if (notifiedApprovals.has(attention.approvalId)) return;
+    notifiedApprovals.add(attention.approvalId);
+  }
+  if (mainWindow.isFocused() || !store.preferences.notify[attention.level]) return;
+  notify(attention);
+}
+
+function notify(attention: Attention): void {
+  log(`notify level=${attention.level} task=${attention.taskId ?? ''} title=${attention.title}`);
+  if (attention.level === 'action') mainWindow?.flashFrame(true);
+  if (!Notification.isSupported()) return;
+  const notification = new Notification({ title: attention.title, body: attention.body });
+  notification.on('click', () => {
+    if (!mainWindow) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+    if (attention.taskId && attention.taskId !== lastSnapshot.taskId) void hostRequest<void>({ type: 'selectTask', taskId: attention.taskId });
+  });
+  notification.show();
+}
+
+function titleBarColors(): { color: string; symbolColor: string; height: number } {
+  return nativeTheme.shouldUseDarkColors
+    ? { color: '#1c1d22', symbolColor: '#c9ccd3', height: 48 }
+    : { color: '#ffffff', symbolColor: '#5b6170', height: 48 };
 }
 
 function localSnapshot(value: WorkbenchSnapshot): void {
@@ -392,6 +437,26 @@ handle<void>('desktop:selectTask', async (taskId: unknown) => {
   if (typeof taskId !== 'string') throw new Error('任务标识无效');
   return hostRequest<void>({ type: 'selectTask', taskId });
 });
+handle<void>('desktop:renameTask', async (taskId: unknown, title: unknown) => {
+  if (typeof taskId !== 'string' || typeof title !== 'string' || !title.trim()) throw new Error('任务名称不能为空');
+  return hostRequest<void>({ type: 'renameTask', taskId, title: title.trim().slice(0, 80) });
+});
+handle<void>('desktop:deleteTask', async (taskId: unknown) => {
+  if (typeof taskId !== 'string') throw new Error('任务标识无效');
+  await assertIdle();
+  if (!await confirm('删除这个任务？', '任务将从列表中移除；仓库里的文件与已提交的改动不受影响。', '删除')) return { ok: true, value: undefined };
+  return hostRequest<void>({ type: 'deleteTask', taskId });
+});
+handle<RunEvent[]>('desktop:getRunEvents', async (runId: unknown) => {
+  if (typeof runId !== 'string') throw new Error('执行标识无效');
+  return hostRequest<RunEvent[]>({ type: 'getRunEvents', runId }, 60000);
+});
+handle<Preferences>('desktop:getPreferences', async () => ({ ok: true, value: store.preferences }));
+handle<Preferences>('desktop:setPreferences', async (value: unknown) => {
+  const preferences = await store.savePreferences(value);
+  nativeTheme.themeSource = preferences.theme;
+  return { ok: true, value: preferences };
+});
 handle<ChangesView>('desktop:getChanges', async () => hostRequest<ChangesView>({ type: 'getChanges' }, 60000));
 handle<DiffView>('desktop:getDiff', async (rootId: unknown, path: unknown) => {
   if (typeof rootId !== 'string' || typeof path !== 'string') throw new Error('差异请求无效');
@@ -480,14 +545,14 @@ async function createWindow(): Promise<void> {
   Menu.setApplicationMenu(null);
   mainWindow = new BrowserWindow({
     titleBarStyle: 'hidden',
-    titleBarOverlay: { color: '#ffffff', symbolColor: '#475467', height: 52 },
+    titleBarOverlay: titleBarColors(),
     width: 1180,
     height: 800,
     minWidth: 860,
     minHeight: 600,
     show: false,
     title: 'CodeAgent',
-    backgroundColor: '#f6f7f9',
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#1c1d22' : '#ffffff',
     webPreferences: {
       preload: fileURLToPath(new URL('../preload.cjs', import.meta.url)),
       nodeIntegration: false,
@@ -496,6 +561,7 @@ async function createWindow(): Promise<void> {
     },
   });
   mainWindow.once('ready-to-show', () => mainWindow?.show());
+  mainWindow.on('focus', () => mainWindow?.flashFrame(false));
   mainWindow.on('close', event => {
     if (closing) return;
     event.preventDefault();
@@ -550,6 +616,8 @@ app.whenReady().then(async () => {
   }
   currentModel = store.model;
   currentModels = store.models;
+  nativeTheme.themeSource = store.preferences.theme;
+  nativeTheme.on('updated', () => mainWindow?.setTitleBarOverlay(titleBarColors()));
   await startHost();
   // 启动时应用模型会清空错误；配置警告需要在 Host 就绪后仍然可见。
   desktopError ??= settingsError;

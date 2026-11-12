@@ -160,7 +160,8 @@ export type RootChanges =
   | { rootId: string; git: { branch?: string; baseCommit?: string; baseTree: string; nowTree: string }; files: FileChange[] }
   | { rootId: string; git: null; reason: string };
 export type ChangesView = { taskId: string; computedAt: number; roots: RootChanges[] };
-export type DiffView = { rootId: string; path: string; patch: string; truncated: boolean };
+/** original/modified：两侧完整文本，供并排对比；二进制或超过大小上限时省略，界面退回显示 patch。 */
+export type DiffView = { rootId: string; path: string; patch: string; truncated: boolean; original?: string; modified?: string };
 
 export type VerificationResult = {
   commandId: string;
@@ -253,6 +254,11 @@ export type WorkbenchSnapshot = {
   documents: DocumentView[];
 };
 
+/** 桌面端偏好：主题与各级系统通知开关（只在主进程与渲染层之间使用，不交给 Host）。 */
+export type ThemePreference = 'system' | 'light' | 'dark';
+export type NotifyLevel = 'action' | 'done' | 'error';
+export type Preferences = { theme: ThemePreference; notify: Record<NotifyLevel, boolean> };
+
 export type Reply<T> = { ok: true; value: T } | { ok: false; error: AppError };
 export type SnapshotEnvelope = { hostInstanceId: string; seq: number; value: WorkbenchSnapshot };
 
@@ -295,6 +301,11 @@ export interface DesktopBridge {
   decideApproval(approvalId: string, decision: ApprovalDecision): Promise<Reply<void>>;
   newTask(): Promise<Reply<void>>;
   selectTask(taskId: string): Promise<Reply<void>>;
+  renameTask(taskId: string, title: string): Promise<Reply<void>>;
+  deleteTask(taskId: string): Promise<Reply<void>>;
+  getRunEvents(runId: string): Promise<Reply<RunEvent[]>>;
+  getPreferences(): Promise<Reply<Preferences>>;
+  setPreferences(preferences: Preferences): Promise<Reply<Preferences>>;
   getChanges(): Promise<Reply<ChangesView>>;
   getDiff(rootId: string, path: string): Promise<Reply<DiffView>>;
   detectAcceptance(): Promise<Reply<DetectedCommand[]>>;
@@ -322,6 +333,8 @@ export type HostCommand =
   | { type: 'setModel'; profile?: ModelInput; apiKey?: string; models: ModelProfile[] }
   | { type: 'newTask'; rootPaths: string[] }
   | { type: 'selectTask'; taskId: string }
+  | { type: 'renameTask'; taskId: string; title: string }
+  | { type: 'deleteTask'; taskId: string }
   | { type: 'addRoot'; path: string; grantSandbox: boolean }
   | { type: 'removeRoot'; rootId: string }
   | { type: 'addDocument'; path: string }
