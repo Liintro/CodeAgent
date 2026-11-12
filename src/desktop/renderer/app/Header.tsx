@@ -1,6 +1,6 @@
 import { Activity, ArrowLeft, BookOpen, FileDiff, ListChecks } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Tooltip } from '@/components/ui/misc';
+import { Tip } from '@/components/ui/misc';
 import { cn } from '@/lib/utils';
 import { Workspace } from '@/features/workspace/Workspace';
 import { useView } from '@/store/snapshot';
@@ -32,7 +32,7 @@ function WorkbenchHeader() {
       <div className="min-w-0 flex-1">{!empty && <Workspace compact />}</div>
       <div className="no-drag flex shrink-0 items-center gap-0.5">
         {toggles.map(({ tab, label, title: tip, icon: Icon }) => (
-          <Tooltip key={tab} content={tip}>
+          <Tip key={tab} content={tip}>
             <Button
               variant="ghost"
               size={tab === 'changes' && changeCount ? 'sm' : 'icon-sm'}
@@ -43,7 +43,7 @@ function WorkbenchHeader() {
             >
               <Icon />{tab === 'changes' && changeCount > 0 && <span className="tabular-nums">{changeCount}</span>}
             </Button>
-          </Tooltip>
+          </Tip>
         ))}
       </div>
     </header>

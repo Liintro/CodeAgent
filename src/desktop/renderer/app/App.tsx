@@ -1,8 +1,9 @@
 import { useEffect } from 'react';
-import { Toaster } from 'sonner';
 import { Sparkles } from 'lucide-react';
 import { attentionFor } from '../../../shared/attention';
-import { TooltipProvider } from '@/components/ui/misc';
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
+import { Toaster } from '@/components/ui/sonner';
+import { TooltipProvider } from '@/components/ui/tooltip';
 import { bridge, call } from '@/lib/bridge';
 import { Composer } from '@/features/composer/Composer';
 import { Dock } from '@/features/dock/Dock';
@@ -32,18 +33,35 @@ export default function App() {
           <Header />
           <div className="flex min-h-0 flex-1">
             {settings ? <SettingsPage /> : (
-              <>
-                <main className="flex min-w-0 flex-1 flex-col">
-                  <Workbench />
-                </main>
-                {panel && <ContextPanel tab={panel} />}
-              </>
+              <ResizablePanelGroup orientation="horizontal">
+                <ResizablePanel id="workbench" minSize={360}>
+                  <main className="flex h-full min-w-0 flex-col">
+                    <Workbench />
+                  </main>
+                </ResizablePanel>
+                {panel && (
+                  <>
+                    <ResizableHandle />
+                    <ResizablePanel
+                      id="context"
+                      defaultSize={useUi.getState().panelWidth}
+                      minSize={320}
+                      maxSize={960}
+                      groupResizeBehavior="preserve-pixel-size"
+                      onResize={size => useUi.getState().setPanelWidth(size.inPixels)}
+                    >
+                      <ContextPanel tab={panel} />
+                    </ResizablePanel>
+                  </>
+                )}
+              </ResizablePanelGroup>
             )}
           </div>
         </div>
       </div>
       <CommandPalette />
-      <Toaster position="bottom-right" theme="system" closeButton toastOptions={{ className: 'font-sans text-[13px]' }} />
+      {/* 右上角、顶栏之下：不遮挡输入框与发送按钮。 */}
+      <Toaster position="top-right" offset={{ top: 56, right: 16 }} closeButton toastOptions={{ className: 'font-sans text-[13px]' }} />
     </TooltipProvider>
   );
 }
@@ -62,9 +80,9 @@ function Workbench() {
 function StartScreen() {
   return (
     <section className="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 px-6">
-      <span className="grid size-10 place-items-center rounded-xl bg-accent-soft text-accent"><Sparkles className="size-5" /></span>
+      <span className="grid size-10 place-items-center rounded-xl bg-primary-soft text-primary"><Sparkles className="size-5" /></span>
       <h2 className="text-lg font-semibold">今天要做什么？</h2>
-      <div className="w-full max-w-[640px] rounded-xl border border-border bg-background p-3">
+      <div className="w-full max-w-[640px] rounded-xl border border-border bg-sidebar p-3">
         <Workspace />
       </div>
     </section>

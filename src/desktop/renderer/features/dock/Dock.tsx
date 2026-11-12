@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, CheckCircle2, CircleStop, Loader2, RotateCw, ShieldAlert, ShieldCheck, XCircle } from 'lucide-react';
 import type { ApprovalDecision, ApprovalRequest } from '../../../../shared/contracts';
 import { Button } from '@/components/ui/button';
-import { Kbd } from '@/components/ui/misc';
+import { Kbd } from '@/components/ui/kbd';
 import { bridge, call } from '@/lib/bridge';
 import { cn, formatDuration } from '@/lib/utils';
 import { runPhaseText, toolTitles } from '@/i18n/zh';
@@ -29,7 +29,7 @@ function HostFailed() {
     <section role="region" aria-label="运行进程" className="flex items-center gap-3 rounded-lg border border-danger/40 bg-danger-soft px-3 py-2 text-[13px] text-danger">
       <XCircle className="size-4 shrink-0" />
       <span className="flex-1">运行进程已退出</span>
-      <Button size="sm" variant="secondary" onClick={() => call(bridge().restartHost())}><RotateCw />重启运行进程</Button>
+      <Button size="sm" variant="outline" onClick={() => call(bridge().restartHost())}><RotateCw />重启运行进程</Button>
     </section>
   );
 }
@@ -82,7 +82,7 @@ function ApprovalCard({ approval }: { approval: ApprovalRequest }) {
       <div className="flex flex-col gap-2 px-3.5 py-2.5">
         <pre data-testid="approval-summary" className="max-h-40 overflow-auto whitespace-pre-wrap rounded-md bg-surface-2 px-2.5 py-1.5 text-[12px]">{approval.summary}</pre>
         {approval.tool !== 'powershell' && approval.argsText !== approval.summary && (
-          <details className="text-xs text-muted">
+          <details className="text-xs text-muted-foreground">
             <summary className="cursor-pointer">完整参数</summary>
             <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-surface-2 px-2.5 py-1.5 text-[11.5px]">{approval.argsText}</pre>
           </details>
@@ -95,9 +95,9 @@ function ApprovalCard({ approval }: { approval: ApprovalRequest }) {
         )}
       </div>
       <div className="flex items-center justify-end gap-2 border-t border-border px-3.5 py-2">
-        <Button variant="secondary" size="sm" disabled={busy} onClick={() => decide('deny')}>拒绝 <Kbd>Esc</Kbd></Button>
-        {approval.grantKey && <Button variant="secondary" size="sm" disabled={busy} onClick={() => decide('allow_task')}>允许本任务 <Kbd>Ctrl ⏎</Kbd></Button>}
-        <Button size="sm" disabled={busy} onClick={() => decide('allow')}>允许本次 <Kbd>⏎</Kbd></Button>
+        <Button variant="outline" size="sm" disabled={busy} onClick={() => decide('deny')}>拒绝 <Kbd aria-hidden="true">Esc</Kbd></Button>
+        {approval.grantKey && <Button variant="outline" size="sm" disabled={busy} onClick={() => decide('allow_task')}>允许本任务 <Kbd aria-hidden="true">Ctrl ⏎</Kbd></Button>}
+        <Button size="sm" disabled={busy} onClick={() => decide('allow')}>允许本次 <Kbd aria-hidden="true">⏎</Kbd></Button>
       </div>
     </section>
   );
@@ -114,8 +114,8 @@ function RunStatus() {
   if (!active || !run) return null;
   const phase = run.phase === 'running' && run.attempt ? `修复 ${run.attempt}/${maxRepairs}` : runPhaseText[run.phase];
   return (
-    <div role="status" aria-label="运行状态" className="flex items-center gap-2 px-1 text-xs text-muted">
-      <Loader2 className="size-3.5 animate-spin text-accent" />
+    <div role="status" aria-label="运行状态" className="flex items-center gap-2 px-1 text-xs text-muted-foreground">
+      <Loader2 className="size-3.5 animate-spin text-primary" />
       <span className="text-foreground">{phase}</span>
       <span>·</span>
       <span className="tabular-nums">{formatDuration(Math.max(0, now - started))}</span>
@@ -182,7 +182,7 @@ function useStrip(): Strip | undefined {
 }
 
 const stripStyles = {
-  info: 'border-accent/30 bg-accent-soft text-foreground',
+  info: 'border-primary/30 bg-primary-soft text-foreground',
   ok: 'border-success/30 bg-success-soft text-success',
   warn: 'border-warning/40 bg-warning-soft text-warning',
   danger: 'border-danger/40 bg-danger-soft text-danger',

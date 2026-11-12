@@ -1,13 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import type { DiffView } from '../../../../shared/contracts';
-import { Spinner } from '@/components/ui/misc';
+import { Spinner } from '@/components/ui/spinner';
+import { isDark, onThemeChange } from '@/app/theme';
 
 type Monaco = typeof import('./monaco');
 
 let loading: Promise<Monaco> | undefined;
 const loadMonaco = () => (loading ??= import('./monaco'));
-
-const dark = () => window.matchMedia('(prefers-color-scheme: dark)').matches;
 
 /** 并排或行内 diff。Host 给不出两侧完整文本（二进制或过大）时退回显示 patch。 */
 export function DiffViewer({ diff, inline }: { diff: DiffView; inline: boolean }) {
@@ -37,15 +36,13 @@ export function DiffViewer({ diff, inline }: { diff: DiffView; inline: boolean }
         fontSize: 12,
         lineNumbersMinChars: 3,
         hideUnchangedRegions: { enabled: true, contextLineCount: 3, minimumLineCount: 5 },
-        theme: dark() ? 'vs-dark' : 'vs',
+        theme: isDark() ? 'vs-dark' : 'vs',
       });
       editor.setModel({ original, modified });
-      const media = window.matchMedia('(prefers-color-scheme: dark)');
-      const onTheme = () => monaco.editor.setTheme(media.matches ? 'vs-dark' : 'vs');
-      media.addEventListener('change', onTheme);
+      const stopTheme = onThemeChange(() => monaco.editor.setTheme(isDark() ? 'vs-dark' : 'vs'));
       setReady(true);
       cleanup = () => {
-        media.removeEventListener('change', onTheme);
+        stopTheme();
         editor.dispose();
         original.dispose();
         modified.dispose();
@@ -68,7 +65,7 @@ export function DiffViewer({ diff, inline }: { diff: DiffView; inline: boolean }
   }
   return (
     <div className="relative min-h-0 flex-1">
-      {!ready && <div className="absolute inset-0 grid place-items-center text-muted"><Spinner /></div>}
+      {!ready && <div className="absolute inset-0 grid place-items-center text-muted-foreground"><Spinner /></div>}
       <div ref={host} aria-label="差异内容" className="absolute inset-0" />
     </div>
   );

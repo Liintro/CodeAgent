@@ -1,8 +1,6 @@
-import { useRef } from 'react';
-import { Tabs } from 'radix-ui';
 import { X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { panelTitles } from '@/i18n/zh';
 import { AcceptancePanel } from '@/features/acceptance/AcceptancePanel';
 import { ChangesPanel } from '@/features/changes/ChangesPanel';
@@ -11,53 +9,24 @@ import { RunPanel } from '@/features/run/RunPanel';
 import { useUi, type PanelTab } from '@/store/ui';
 
 const tabs: PanelTab[] = ['changes', 'acceptance', 'memory', 'run'];
+const content = 'flex min-h-0 flex-1 flex-col outline-none';
 
+/** 右栏上下文面板；宽度由外层 ResizablePanel 控制。 */
 export function ContextPanel({ tab }: { tab: PanelTab }) {
-  const width = useUi(state => state.panelWidth);
   return (
-    <aside aria-label={panelTitles[tab]} className="relative flex shrink-0 flex-col border-l border-border bg-surface" style={{ width }}>
-      <ResizeHandle />
-      <Tabs.Root value={tab} onValueChange={value => useUi.getState().openPanel(value as PanelTab)} className="flex min-h-0 flex-1 flex-col">
+    <aside aria-label={panelTitles[tab]} className="flex h-full min-w-0 flex-col bg-surface">
+      <Tabs value={tab} onValueChange={value => useUi.getState().openPanel(value as PanelTab)} className="min-h-0 flex-1 gap-0">
         <div className="flex h-10 shrink-0 items-center gap-1 border-b border-border px-2">
-          <Tabs.List className="flex flex-1 gap-0.5">
-            {tabs.map(value => (
-              <Tabs.Trigger
-                key={value}
-                value={value}
-                className={cn('h-7 rounded-md px-2.5 text-xs font-medium text-muted hover:text-foreground', 'data-[state=active]:bg-surface-3 data-[state=active]:text-foreground')}
-              >
-                {panelTitles[value]}
-              </Tabs.Trigger>
-            ))}
-          </Tabs.List>
-          <Button variant="ghost" size="icon-sm" aria-label="关闭面板" onClick={() => useUi.getState().closePanel()}><X /></Button>
+          <TabsList variant="line" className="h-8 flex-1 justify-start">
+            {tabs.map(value => <TabsTrigger key={value} value={value} className="flex-none px-2.5 text-xs">{panelTitles[value]}</TabsTrigger>)}
+          </TabsList>
+          <Button variant="ghost" size="icon-xs" aria-label="关闭面板" onClick={() => useUi.getState().closePanel()}><X /></Button>
         </div>
-        <Tabs.Content value="changes" className="flex min-h-0 flex-1 flex-col outline-none"><ChangesPanel /></Tabs.Content>
-        <Tabs.Content value="acceptance" className="flex min-h-0 flex-1 flex-col outline-none"><AcceptancePanel /></Tabs.Content>
-        <Tabs.Content value="memory" className="flex min-h-0 flex-1 flex-col outline-none"><MemoryPanel /></Tabs.Content>
-        <Tabs.Content value="run" className="flex min-h-0 flex-1 flex-col outline-none"><RunPanel /></Tabs.Content>
-      </Tabs.Root>
+        <TabsContent value="changes" className={content}><ChangesPanel /></TabsContent>
+        <TabsContent value="acceptance" className={content}><AcceptancePanel /></TabsContent>
+        <TabsContent value="memory" className={content}><MemoryPanel /></TabsContent>
+        <TabsContent value="run" className={content}><RunPanel /></TabsContent>
+      </Tabs>
     </aside>
-  );
-}
-
-function ResizeHandle() {
-  const start = useRef<{ x: number; width: number }>(undefined);
-  return (
-    <div
-      role="separator"
-      aria-orientation="vertical"
-      aria-label="调整面板宽度"
-      className="absolute -left-1 top-0 z-10 h-full w-2 cursor-col-resize hover:bg-accent/20 active:bg-accent/30"
-      onPointerDown={event => {
-        start.current = { x: event.clientX, width: useUi.getState().panelWidth };
-        event.currentTarget.setPointerCapture(event.pointerId);
-      }}
-      onPointerMove={event => {
-        if (start.current) useUi.getState().setPanelWidth(start.current.width + start.current.x - event.clientX);
-      }}
-      onPointerUp={() => { start.current = undefined; }}
-      onDoubleClick={() => useUi.getState().setPanelWidth(420)}
-    />
   );
 }

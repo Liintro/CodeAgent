@@ -57,12 +57,12 @@ function ErrorDetail({ detail }: { detail: string }) {
   return (
     <div className="mt-1">
       <div className="flex items-center gap-2">
-        <button type="button" className="inline-flex items-center gap-0.5 text-xs text-muted hover:text-foreground" onClick={() => setOpen(value => !value)}>
+        <button type="button" className="inline-flex items-center gap-0.5 text-xs text-muted-foreground hover:text-foreground" onClick={() => setOpen(value => !value)}>
           <ChevronRight className={`size-3 transition-transform ${open ? 'rotate-90' : ''}`} />诊断详情
         </button>
         <button
           type="button"
-          className="inline-flex items-center gap-1 text-xs text-muted hover:text-foreground"
+          className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
           onClick={() => void navigator.clipboard.writeText(detail).then(() => setCopied(true))}
         >
           {copied ? <Check className="size-3" /> : <Copy className="size-3" />}{copied ? '已复制' : '复制'}

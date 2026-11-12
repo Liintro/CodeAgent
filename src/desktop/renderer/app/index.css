@@ -1,86 +1,119 @@
 @import "tailwindcss";
 
-/* 主题跟随 prefers-color-scheme：主进程用 nativeTheme.themeSource 切换“跟随系统 / 浅色 / 暗色”，渲染层只需响应媒体查询。 */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/* 变量名沿用 shadcn/ui；data-theme 由 app/theme.ts 按“跟随系统 / 浅色 / 暗色”设置。 */
 :root {
-  --background: #f7f7f8;
+  --radius: 0.5rem;
+  --background: #ffffff;
+  --foreground: #1b1d22;
+  --card: #ffffff;
+  --card-foreground: #1b1d22;
+  --popover: #ffffff;
+  --popover-foreground: #1b1d22;
+  --primary: #3a5ccc;
+  --primary-foreground: #ffffff;
+  --primary-soft: #e9eefc;
+  --secondary: #f1f2f4;
+  --secondary-foreground: #1b1d22;
+  --muted: #f1f2f4;
+  --muted-foreground: #646a77;
+  --accent: #eceef1;
+  --accent-foreground: #1b1d22;
+  --destructive: #c0302f;
+  --destructive-soft: #fbe8e7;
+  --border: #e3e4e8;
+  --border-strong: #cfd1d7;
+  --input: #dadce1;
+  --ring: #3a5ccc;
+  --sidebar: #f7f7f8;
   --surface: #ffffff;
   --surface-2: #f1f2f4;
   --surface-3: #e8e9ec;
-  --border: #e3e4e8;
-  --border-strong: #cfd1d7;
-  --foreground: #1b1d22;
-  --muted-foreground: #646a77;
   --subtle-foreground: #8b909c;
-  --accent: #3a5ccc;
-  --accent-hover: #3050b8;
-  --accent-foreground: #ffffff;
-  --accent-soft: #e9eefc;
   --success: #1d7f47;
   --success-soft: #e5f4eb;
   --warning: #a35f00;
   --warning-soft: #fdf1dc;
-  --danger: #c0302f;
-  --danger-soft: #fbe8e7;
-  --ring: #3a5ccc66;
   --shadow: 0 1px 2px #0000000d, 0 4px 16px #0000000a;
   color-scheme: light;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #16171b;
-    --surface: #1c1d22;
-    --surface-2: #23252b;
-    --surface-3: #2c2e35;
-    --border: #2d2f36;
-    --border-strong: #3c3f48;
-    --foreground: #e6e7ea;
-    --muted-foreground: #9da2ad;
-    --subtle-foreground: #747985;
-    --accent: #7f97ff;
-    --accent-hover: #93a8ff;
-    --accent-foreground: #10131c;
-    --accent-soft: #252c45;
-    --success: #4cc38a;
-    --success-soft: #1b3428;
-    --warning: #e3a33c;
-    --warning-soft: #3a2d17;
-    --danger: #ff6f6b;
-    --danger-soft: #3d1f20;
-    --ring: #7f97ff66;
-    --shadow: 0 1px 2px #00000040, 0 6px 20px #00000040;
-    color-scheme: dark;
-  }
+:root[data-theme="dark"] {
+  --background: #1c1d22;
+  --foreground: #e6e7ea;
+  --card: #1c1d22;
+  --card-foreground: #e6e7ea;
+  --popover: #23252b;
+  --popover-foreground: #e6e7ea;
+  --primary: #7f97ff;
+  --primary-foreground: #10131c;
+  --primary-soft: #252c45;
+  --secondary: #2c2e35;
+  --secondary-foreground: #e6e7ea;
+  --muted: #23252b;
+  --muted-foreground: #9da2ad;
+  --accent: #2c2e35;
+  --accent-foreground: #e6e7ea;
+  --destructive: #ff6f6b;
+  --destructive-soft: #3d1f20;
+  --border: #2d2f36;
+  --border-strong: #3c3f48;
+  --input: #3a3d46;
+  --ring: #7f97ff;
+  --sidebar: #16171b;
+  --surface: #1c1d22;
+  --surface-2: #23252b;
+  --surface-3: #2c2e35;
+  --subtle-foreground: #747985;
+  --success: #4cc38a;
+  --success-soft: #1b3428;
+  --warning: #e3a33c;
+  --warning-soft: #3a2d17;
+  --shadow: 0 1px 2px #00000040, 0 6px 20px #00000040;
+  color-scheme: dark;
 }
 
 @theme inline {
   --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-soft: var(--primary-soft);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-soft: var(--destructive-soft);
+  --color-danger: var(--destructive);
+  --color-danger-soft: var(--destructive-soft);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
   --color-surface: var(--surface);
   --color-surface-2: var(--surface-2);
   --color-surface-3: var(--surface-3);
-  --color-border: var(--border);
-  --color-border-strong: var(--border-strong);
-  --color-foreground: var(--foreground);
-  --color-muted: var(--muted-foreground);
   --color-subtle: var(--subtle-foreground);
-  --color-accent: var(--accent);
-  --color-accent-hover: var(--accent-hover);
-  --color-accent-foreground: var(--accent-foreground);
-  --color-accent-soft: var(--accent-soft);
   --color-success: var(--success);
   --color-success-soft: var(--success-soft);
   --color-warning: var(--warning);
   --color-warning-soft: var(--warning-soft);
-  --color-danger: var(--danger);
-  --color-danger-soft: var(--danger-soft);
-  --color-ring: var(--ring);
   --shadow-panel: var(--shadow);
   --font-sans: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
   --font-mono: "Cascadia Mono", "Cascadia Code", Consolas, "Microsoft YaHei UI", monospace;
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
-  --radius-xl: 12px;
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
 }
 
 @layer base {
@@ -88,7 +121,7 @@
   html, body, #root { height: 100%; }
   body {
     margin: 0;
-    background: var(--background);
+    background: var(--sidebar);
     color: var(--foreground);
     font-family: var(--font-sans);
     font-size: 13px;
@@ -97,8 +130,8 @@
     overflow: hidden;
   }
   button, input, textarea, select { font: inherit; color: inherit; }
-  :focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
-  ::selection { background: var(--accent-soft); }
+  :focus-visible { outline: 2px solid color-mix(in oklab, var(--ring) 50%, transparent); outline-offset: 1px; }
+  ::selection { background: var(--primary-soft); }
   ::-webkit-scrollbar { width: 10px; height: 10px; }
   ::-webkit-scrollbar-thumb { background: var(--surface-3); border-radius: 8px; border: 2px solid transparent; background-clip: padding-box; }
   ::-webkit-scrollbar-thumb:hover { background-color: var(--border-strong); }
@@ -120,7 +153,7 @@
 .prose-chat ul { list-style: disc; padding-left: 1.4em; }
 .prose-chat ol { list-style: decimal; padding-left: 1.4em; }
 .prose-chat li + li { margin-top: 0.2em; }
-.prose-chat a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+.prose-chat a { color: var(--primary); text-decoration: underline; text-underline-offset: 2px; }
 .prose-chat blockquote { border-left: 3px solid var(--border-strong); padding-left: 0.8em; color: var(--muted-foreground); }
 .prose-chat :not(pre) > code { background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px; padding: 0 0.3em; font-size: 0.92em; }
 .prose-chat table { border-collapse: collapse; display: block; overflow-x: auto; }
@@ -128,11 +161,9 @@
 .prose-chat th { background: var(--surface-2); font-weight: 600; }
 .prose-chat hr { border: 0; border-top: 1px solid var(--border); }
 
-/* Shiki 输出两套主题变量，随媒体查询切换。 */
+/* Shiki 输出两套主题变量，随 data-theme 切换。 */
 .shiki, .shiki span { background-color: transparent !important; }
-@media (prefers-color-scheme: dark) {
-  .shiki, .shiki span { color: var(--shiki-dark) !important; }
-}
+[data-theme="dark"] .shiki, [data-theme="dark"] .shiki span { color: var(--shiki-dark) !important; }
 
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }

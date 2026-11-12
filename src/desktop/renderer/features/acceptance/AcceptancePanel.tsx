@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Play, Plus, ScanSearch, X } from 'lucide-react';
 import type { DetectedCommand, VerifyCommand } from '../../../../shared/contracts';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/form';
+import { Input } from '@/components/ui/input';
 import { Empty } from '@/components/ui/misc';
 import { bridge, call } from '@/lib/bridge';
 import { useActive, useView } from '@/store/snapshot';
@@ -32,7 +32,7 @@ export function AcceptancePanel() {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
-        <p className="pb-2 text-xs text-muted">确认后的命令会在 Agent 修改文件之后自动运行；失败的真实输出会交给 Agent 修复。</p>
+        <p className="pb-2 text-xs text-muted-foreground">确认后的命令会在 Agent 修改文件之后自动运行；失败的真实输出会交给 Agent 修复。</p>
         {!roots.length && <Empty>先添加工作目录</Empty>}
         {roots.map(root => {
           const own = commands.filter(command => command.rootId === root.id);
@@ -45,7 +45,7 @@ export function AcceptancePanel() {
                   <Input aria-label="命令名称" className="h-7 text-xs" value={command.label} onChange={event => update(command.id, { label: event.target.value })} />
                   <Button variant="ghost" size="icon-sm" aria-label="删除命令" onClick={() => setCommands(list => list.filter(item => item.id !== command.id))}><X /></Button>
                   <Input aria-label="验收命令" className="col-span-2 h-7 font-mono text-xs" value={command.command} onChange={event => update(command.id, { command: event.target.value })} />
-                  <label className="col-span-2 flex items-center gap-1.5 text-xs text-muted">
+                  <label className="col-span-2 flex items-center gap-1.5 text-xs text-muted-foreground">
                     超时
                     <Input aria-label="超时秒数" type="number" min={1} max={3600} className="h-6 w-20 text-xs" value={command.timeoutSeconds} onChange={event => update(command.id, { timeoutSeconds: Number(event.target.value) })} />
                     秒
@@ -62,10 +62,10 @@ export function AcceptancePanel() {
             {suggestions.map(item => (
               <div key={item.id} className="mb-1 flex items-center gap-2 rounded-md bg-surface-2 px-2 py-1.5 text-xs">
                 <span className="min-w-0 flex-1">
-                  <span className="text-muted">{roots.find(root => root.id === item.rootId)?.alias} · </span><code className="font-mono">{item.command}</code>
+                  <span className="text-muted-foreground">{roots.find(root => root.id === item.rootId)?.alias} · </span><code className="font-mono">{item.command}</code>
                   {item.problem ? <small className="block text-warning">{item.problem}</small> : item.toolchain && <small className="block text-subtle">{item.toolchain}</small>}
                 </span>
-                <Button variant="secondary" size="xs" onClick={() => add({ id: item.id, rootId: item.rootId, label: item.label, command: item.command, timeoutSeconds: item.timeoutSeconds })}>添加</Button>
+                <Button variant="outline" size="xs" onClick={() => add({ id: item.id, rootId: item.rootId, label: item.label, command: item.command, timeoutSeconds: item.timeoutSeconds })}>添加</Button>
               </div>
             ))}
           </section>
@@ -73,15 +73,15 @@ export function AcceptancePanel() {
       </div>
       <div className="flex flex-col gap-2 border-t border-border px-3 py-2.5">
         <div className="flex items-center gap-2">
-          <label className="flex items-center gap-1.5 text-xs text-muted">
+          <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
             最多修复
             <Input aria-label="修复次数上限" type="number" min={0} max={10} className="h-7 w-14 text-xs" value={maxRepairs} onChange={event => setMaxRepairs(Number(event.target.value))} />
             次
           </label>
-          <Button variant="secondary" size="sm" className="ml-auto" onClick={detect} disabled={active || !roots.length}><ScanSearch />检测</Button>
+          <Button variant="outline" size="sm" className="ml-auto" onClick={detect} disabled={active || !roots.length}><ScanSearch />检测</Button>
           <Button size="sm" onClick={() => call(bridge().setAcceptance({ commands, maxRepairs }))} disabled={active || saved || commands.some(command => !command.command.trim())}>{saved ? '已保存' : '保存并确认'}</Button>
         </div>
-        <Button variant="secondary" onClick={() => call(bridge().verifyNow())} disabled={active || plan || !acceptance.commands.length}><Play />立即验证</Button>
+        <Button variant="outline" onClick={() => call(bridge().verifyNow())} disabled={active || plan || !acceptance.commands.length}><Play />立即验证</Button>
         {plan && <p className="text-xs text-subtle">计划模式不执行验证命令。</p>}
       </div>
     </div>

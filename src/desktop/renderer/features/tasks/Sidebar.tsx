@@ -2,7 +2,8 @@ import { useMemo, useState } from 'react';
 import { MoreHorizontal, Pencil, Plus, Search, Settings, Trash2 } from 'lucide-react';
 import type { TaskSummary, WorkbenchSnapshot } from '../../../../shared/contracts';
 import { Button } from '@/components/ui/button';
-import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/menu';
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@/components/ui/context-menu';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { bridge, call } from '@/lib/bridge';
 import { cn } from '@/lib/utils';
 import { deliveryText } from '@/i18n/zh';
@@ -23,13 +24,13 @@ export function Sidebar() {
   const groups = useMemo(() => groupByProject(tasks, query), [tasks, query]);
 
   return (
-    <aside className="flex w-60 shrink-0 flex-col border-r border-border bg-background">
+    <aside className="flex w-60 shrink-0 flex-col border-r border-border bg-sidebar">
       <div className="drag flex h-12 shrink-0 items-center gap-2 px-4 text-[13px] font-semibold tracking-tight">
-        <span className="grid size-5 place-items-center rounded-md bg-accent text-[11px] font-bold text-accent-foreground">C</span>
+        <span className="grid size-5 place-items-center rounded-md bg-primary text-[11px] font-bold text-primary-foreground">C</span>
         CodeAgent
       </div>
       <div className="flex flex-col gap-2 px-3 pb-2">
-        <Button variant="secondary" className="justify-start" onClick={() => call(bridge().newTask())} disabled={active || !ready}>
+        <Button variant="outline" className="justify-start" onClick={() => call(bridge().newTask())} disabled={active || !ready}>
           <Plus />新任务
         </Button>
         <label className="relative flex items-center">
@@ -39,7 +40,7 @@ export function Sidebar() {
             value={query}
             onChange={event => setQuery(event.target.value)}
             placeholder="搜索任务"
-            className="h-7 w-full rounded-md border border-transparent bg-surface-2 pl-8 pr-2 text-xs placeholder:text-subtle focus:border-accent focus:outline-none"
+            className="h-7 w-full rounded-md border border-transparent bg-surface-2 pl-8 pr-2 text-xs placeholder:text-subtle focus:border-primary focus:outline-none"
           />
         </label>
       </div>
@@ -91,7 +92,7 @@ function TaskRow({ task, current, locked }: { task: TaskSummary; current: boolea
           </button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <button aria-label={`任务操作 ${task.title}`} className="absolute right-1 hidden rounded p-1 text-muted hover:bg-surface-3 hover:text-foreground group-hover:block data-[state=open]:block">
+              <button aria-label={`任务操作 ${task.title}`} className="absolute right-1 hidden rounded p-1 text-muted-foreground hover:bg-surface-3 hover:text-foreground group-hover:block data-[state=open]:block">
                 <MoreHorizontal className="size-3.5" />
               </button>
             </DropdownMenuTrigger>
@@ -129,7 +130,7 @@ function RenameRow({ task, onDone }: { task: TaskSummary; onDone: () => void }) 
           if (event.key === 'Enter' && !event.nativeEvent.isComposing) void save();
           if (event.key === 'Escape') onDone();
         }}
-        className="h-7 w-full rounded-md border border-accent bg-surface px-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-ring"
+        className="h-7 w-full rounded-md border border-primary bg-surface px-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-ring"
       />
     </li>
   );
@@ -141,7 +142,7 @@ function useTaskStatus(task: TaskSummary, current: boolean): { dot: Dot; text: s
   const unread = useNotifications(state => state.unread.has(task.id));
   const live = useView(view => current ? liveState(view) : undefined);
   if (live === 'approval') return { dot: 'attention', text: '待批准', tone: 'text-warning' };
-  if (live === 'running') return { dot: 'running', text: '运行中', tone: 'text-accent' };
+  if (live === 'running') return { dot: 'running', text: '运行中', tone: 'text-primary' };
   if (task.interrupted) return { dot: 'attention', text: '已中断', tone: 'text-warning' };
   const text = deliveryText[task.delivery];
   if (task.delivery === 'verification_failed') return { dot: 'failed', text, tone: 'text-danger' };
@@ -160,10 +161,10 @@ function StatusDot({ status }: { status: Dot }) {
       aria-hidden="true"
       className={cn(
         'size-1.5 shrink-0 rounded-full',
-        status === 'running' && 'animate-pulse-dot bg-accent',
+        status === 'running' && 'animate-pulse-dot bg-primary',
         status === 'attention' && 'bg-warning',
         status === 'failed' && 'bg-danger',
-        status === 'unread' && 'bg-accent',
+        status === 'unread' && 'bg-primary',
         status === 'none' && 'bg-transparent',
       )}
     />

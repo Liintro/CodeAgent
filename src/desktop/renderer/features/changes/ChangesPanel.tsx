@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react';
 import { Check, Columns2, GitBranch, GitCommitHorizontal, RefreshCw, Rows2, Undo2, X } from 'lucide-react';
 import type { DiffView, RootDelivery, WorkbenchSnapshot } from '../../../../shared/contracts';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogBody, DialogContent, DialogFooter } from '@/components/ui/dialog';
-import { Checkbox, Textarea } from '@/components/ui/form';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { CheckboxField } from '@/components/ui/form';
+import { Textarea } from '@/components/ui/textarea';
 import { Badge, Empty, type Tone } from '@/components/ui/misc';
 import { bridge, call } from '@/lib/bridge';
 import { cn } from '@/lib/utils';
@@ -17,7 +18,7 @@ const stateTone = (state: string): Tone => state === 'verified' || state === 'co
   : state === 'verification_failed' ? 'danger' : state === 'unverified' ? 'warning' : 'neutral';
 
 const statusLabel = { A: '新增', M: '修改', D: '删除', R: '重命名' } as const;
-const statusTone = { A: 'text-success', M: 'text-accent', D: 'text-danger', R: 'text-warning' } as const;
+const statusTone = { A: 'text-success', M: 'text-primary', D: 'text-danger', R: 'text-warning' } as const;
 
 export function ChangesPanel() {
   const view = useView(value => value);
@@ -60,7 +61,7 @@ export function ChangesPanel() {
         {summary
           ? <Badge data-testid="delivery-state" data-state={delivery!.state} tone={stateTone(delivery!.state)}>{summary}</Badge>
           : <span className="text-xs text-subtle">尚无交付状态</span>}
-        <span className="flex-1 truncate text-xs text-muted">{deliveryLine(view)}</span>
+        <span className="flex-1 truncate text-xs text-muted-foreground">{deliveryLine(view)}</span>
         <Button variant="ghost" size="icon-sm" aria-label="刷新" title="刷新" onClick={refresh} disabled={active || refreshing}>
           <RefreshCw className={cn(refreshing && 'animate-spin')} />
         </Button>
@@ -86,7 +87,7 @@ export function ChangesPanel() {
                     key={file.path}
                     aria-label={`${statusLabel[file.status]} ${file.path}`}
                     aria-current={current || undefined}
-                    className={cn('flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left text-xs hover:bg-surface-2', current && 'bg-accent-soft')}
+                    className={cn('flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left text-xs hover:bg-surface-2', current && 'bg-primary-soft')}
                     onClick={() => useUi.getState().openDiff({ rootId: entry.rootId, path: file.path })}
                   >
                     <span className={cn('w-3 shrink-0 font-mono font-semibold', statusTone[file.status])}>{file.status}</span>
@@ -137,14 +138,14 @@ function DeliveryBlock({ info, hasFiles, active, onCommit, onRestore }: { info: 
         </div>
       ))}
       {info.noCommands && <p className="text-xs text-warning">该目录有改动但没有验收命令，不能视为已验证。</p>}
-      {info.state === 'unverified' && info.verification.length === 0 && !info.noCommands && <p className="text-xs text-muted">代码在上次验证之后又有变化，需要重新验证。</p>}
-      {info.dirtyAtBaseline && <p className="text-xs text-muted">任务开始时该目录已有您未提交的修改。</p>}
-      {info.commitSha && <p className="text-xs text-muted">提交 {info.commitSha.slice(0, 7)}（未推送）</p>}
+      {info.state === 'unverified' && info.verification.length === 0 && !info.noCommands && <p className="text-xs text-muted-foreground">代码在上次验证之后又有变化，需要重新验证。</p>}
+      {info.dirtyAtBaseline && <p className="text-xs text-muted-foreground">任务开始时该目录已有您未提交的修改。</p>}
+      {info.commitSha && <p className="text-xs text-muted-foreground">提交 {info.commitSha.slice(0, 7)}（未推送）</p>}
       {info.git && hasFiles && (
         <div className="flex gap-1.5 pt-0.5">
-          <Button variant="secondary" size="xs" disabled={active || info.state === 'accepted' || info.state === 'committed'} onClick={() => call(bridge().acceptRoot(info.rootId))}><Check />接受</Button>
-          <Button variant="secondary" size="xs" disabled={active || info.state === 'committed'} onClick={onRestore}><Undo2 />还原</Button>
-          <Button variant="secondary" size="xs" disabled={active || info.state === 'committed'} onClick={onCommit}><GitCommitHorizontal />提交…</Button>
+          <Button variant="outline" size="xs" disabled={active || info.state === 'accepted' || info.state === 'committed'} onClick={() => call(bridge().acceptRoot(info.rootId))}><Check />接受</Button>
+          <Button variant="outline" size="xs" disabled={active || info.state === 'committed'} onClick={onRestore}><Undo2 />还原</Button>
+          <Button variant="outline" size="xs" disabled={active || info.state === 'committed'} onClick={onCommit}><GitCommitHorizontal />提交…</Button>
         </div>
       )}
     </div>
@@ -169,11 +170,14 @@ function CommitDialog({ info, onClose }: { info: RootDelivery; onClose: () => vo
 
   return (
     <Dialog open onOpenChange={open => !open && onClose()}>
-      <DialogContent title={`提交到 ${info.alias}${info.branch ? ` · ${info.branch}` : ''}`}>
-        <DialogBody>
+      <DialogContent aria-describedby={undefined} className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>提交到 {info.alias}{info.branch ? ` · ${info.branch}` : ''}</DialogTitle>
+        </DialogHeader>
+        <div className="flex flex-col gap-3">
           <Textarea aria-label="提交说明" autoFocus value={message} onChange={event => setMessage(event.target.value)} placeholder="提交说明" rows={3} />
           <div>
-            <p className="pb-1 text-xs font-medium text-muted">将提交 {info.files.length} 个文件</p>
+            <p className="pb-1 text-xs font-medium text-muted-foreground">将提交 {info.files.length} 个文件</p>
             <ul className="max-h-40 overflow-auto rounded-md border border-border bg-surface-2 px-2 py-1">
               {info.files.map(file => (
                 <li key={file.path} className="flex items-center gap-2 py-0.5 text-xs">
@@ -184,15 +188,15 @@ function CommitDialog({ info, onClose }: { info: RootDelivery; onClose: () => vo
             </ul>
           </div>
           {shared && (
-            <Checkbox
+            <CheckboxField
               checked={confirmShared}
-              onChange={event => setConfirmShared(event.target.checked)}
+              onCheckedChange={checked => setConfirmShared(checked === true)}
               label={<span className="text-warning">提交将包含您在这些文件上已有的修改：{info.sharedPaths.join('、')}</span>}
             />
           )}
-        </DialogBody>
+        </div>
         <DialogFooter>
-          <Button variant="secondary" onClick={onClose}>取消</Button>
+          <Button variant="outline" onClick={onClose}>取消</Button>
           <Button disabled={busy || active || !message.trim() || (shared && !confirmShared)} onClick={commit}>提交所选改动</Button>
         </DialogFooter>
       </DialogContent>

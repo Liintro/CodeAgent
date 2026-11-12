@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { Plus } from 'lucide-react';
 import type { KeyChange, ModelInput, ModelProfile } from '../../../../shared/contracts';
 import { Button } from '@/components/ui/button';
-import { Checkbox, Field, Input, Select } from '@/components/ui/form';
+import { CheckboxField, Field, Select } from '@/components/ui/form';
+import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/misc';
 import { bridge } from '@/lib/bridge';
 import { cn } from '@/lib/utils';
@@ -117,12 +118,12 @@ export function ModelSection() {
             aria-pressed={item.id === editingId}
             disabled={active}
             onClick={() => loadProfile(item.id)}
-            className={cn('flex flex-col items-start gap-0.5 rounded-lg border px-3 py-2 text-left disabled:opacity-50', item.id === editingId ? 'border-accent bg-accent-soft' : 'border-border hover:bg-surface-2')}
+            className={cn('flex flex-col items-start gap-0.5 rounded-lg border px-3 py-2 text-left disabled:opacity-50', item.id === editingId ? 'border-primary bg-primary-soft' : 'border-border hover:bg-surface-2')}
           >
             <span className="flex w-full items-center gap-1.5 text-[13px] font-medium">
               <span className="truncate">{item.name}</span>{item.id === model?.id && <Badge tone="accent" className="ml-auto">当前</Badge>}
             </span>
-            <small className="w-full truncate text-[11px] text-muted">{item.provider ? `${item.provider} · ` : ''}{item.modelId}</small>
+            <small className="w-full truncate text-[11px] text-muted-foreground">{item.provider ? `${item.provider} · ` : ''}{item.modelId}</small>
             <small className={cn('text-[11px]', item.hasApiKey ? 'text-success' : 'text-warning')}>{item.hasApiKey ? '密钥已配置' : '未配置密钥'}</small>
           </button>
         ))}
@@ -146,9 +147,9 @@ export function ModelSection() {
             </Select>
           </Field>
         )}
-        {editing?.hasApiKey && <Checkbox checked={removeKey} onChange={event => setRemoveKey(event.target.checked)} disabled={active} label="移除已保存密钥" />}
+        {editing?.hasApiKey && <CheckboxField checked={removeKey} onCheckedChange={checked => setRemoveKey(checked === true)} disabled={active} label="移除已保存密钥" />}
         <details className="group rounded-lg border border-border">
-          <summary className="cursor-pointer select-none px-3 py-2 text-xs font-medium text-muted hover:text-foreground">更多</summary>
+          <summary className="cursor-pointer select-none px-3 py-2 text-xs font-medium text-muted-foreground hover:text-foreground">更多</summary>
           <div className="flex flex-col gap-3 border-t border-border px-3 py-3">
             <div className="grid grid-cols-2 gap-3">
               <Field label="上下文预算"><Input type="number" min="1" value={draft.contextWindow} onChange={event => change({ contextWindow: Number(event.target.value) })} disabled={active} /></Field>
@@ -160,18 +161,18 @@ export function ModelSection() {
               </Select>
             </Field>
             <small className="text-[11px] text-subtle">将随请求发送给端点（DeepSeek 官方端点发送 thinking 与 reasoning_effort，其他 OpenAI 兼容端点发送 reasoning_effort）；端点不支持时会报错，不会伪装生效。</small>
-            <Checkbox checked={draft.vision} onChange={event => change({ vision: event.target.checked })} disabled={active} label="支持图像输入" />
+            <CheckboxField checked={draft.vision} onCheckedChange={checked => change({ vision: checked === true })} disabled={active} label="支持图像输入" />
           </div>
         </details>
         {message && <p className={cn('text-xs', message.ok ? 'text-success' : 'text-danger')} role={message.ok ? 'status' : 'alert'}>{message.text}</p>}
         {testResult && <pre className="max-h-40 overflow-auto whitespace-pre-wrap rounded-md bg-surface-2 p-2.5 text-xs">{testResult}</pre>}
         <div className="flex items-center gap-2 border-t border-border pt-3">
           {active ? (
-            <Button variant="destructive-outline" onClick={() => run && bridge().cancelRun(run.id)}>取消执行</Button>
+            <Button variant="outline" className="text-destructive hover:text-destructive" onClick={() => run && bridge().cancelRun(run.id)}>取消执行</Button>
           ) : (
             <>
-              <Button variant="secondary" onClick={test} disabled={editingId !== model?.id || Boolean(busy)}>测试连接</Button>
-              {editing && <Button variant="destructive-outline" onClick={remove} disabled={Boolean(busy)}>{confirmDelete ? '确认删除' : '删除'}</Button>}
+              <Button variant="outline" onClick={test} disabled={editingId !== model?.id || Boolean(busy)}>测试连接</Button>
+              {editing && <Button variant="outline" className="text-destructive hover:text-destructive" onClick={remove} disabled={Boolean(busy)}>{confirmDelete ? '确认删除' : '删除'}</Button>}
             </>
           )}
           <Button className="ml-auto" onClick={save} disabled={active || Boolean(busy)}>{busy === 'save' ? '保存中…' : '保存'}</Button>

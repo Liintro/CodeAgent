@@ -122,8 +122,8 @@ function notify(attention: Attention): void {
 
 function titleBarColors(): { color: string; symbolColor: string; height: number } {
   return nativeTheme.shouldUseDarkColors
-    ? { color: '#16171b', symbolColor: '#c9ccd3', height: 48 }
-    : { color: '#f7f7f8', symbolColor: '#5b6170', height: 48 };
+    ? { color: '#1c1d22', symbolColor: '#c9ccd3', height: 48 }
+    : { color: '#ffffff', symbolColor: '#5b6170', height: 48 };
 }
 
 function localSnapshot(value: WorkbenchSnapshot): void {
@@ -552,7 +552,7 @@ async function createWindow(): Promise<void> {
     minHeight: 600,
     show: false,
     title: 'CodeAgent',
-    backgroundColor: nativeTheme.shouldUseDarkColors ? '#16171b' : '#f7f7f8',
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#1c1d22' : '#ffffff',
     webPreferences: {
       preload: fileURLToPath(new URL('../preload.cjs', import.meta.url)),
       nodeIntegration: false,

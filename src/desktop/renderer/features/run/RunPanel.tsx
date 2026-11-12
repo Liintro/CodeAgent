@@ -52,7 +52,7 @@ export function RunPanel() {
           <li key={event.seq} className="flex items-baseline gap-2 border-b border-border/60 py-1 text-xs last:border-b-0">
             <span className="w-14 shrink-0 font-mono text-[11px] text-subtle tabular-nums">{stats.start ? `+${((event.at - stats.start) / 1000).toFixed(1)}s` : ''}</span>
             <span className="shrink-0">{eventText[event.type] ?? event.type}</span>
-            <span className="min-w-0 truncate text-muted" title={detail(event)}>{detail(event)}</span>
+            <span className="min-w-0 truncate text-muted-foreground" title={detail(event)}>{detail(event)}</span>
             {event.type === 'tool.finished' && typeof event.data.state === 'string' && event.data.state !== 'succeeded' && <Badge tone="danger" className="ml-auto">{event.data.state}</Badge>}
           </li>
         ))}

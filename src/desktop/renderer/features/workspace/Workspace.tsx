@@ -17,7 +17,7 @@ export function Workspace({ compact }: { compact?: boolean }) {
       <div role="group" aria-label="工作目录" className="flex shrink-0 items-center gap-1.5">
         {roots.map(root => (
           <span key={root.id} className={cn(chip, root.missing && 'border-danger/50')} title={root.path}>
-            <FolderGit2 className={cn('size-3.5 shrink-0', root.primary ? 'text-accent' : 'text-subtle')} />
+            <FolderGit2 className={cn('size-3.5 shrink-0', root.primary ? 'text-primary' : 'text-subtle')} />
             <button className="truncate font-medium disabled:cursor-default" disabled={active || root.primary} onClick={() => call(bridge().setPrimaryRoot(root.id))} aria-label={`设为主目录 ${root.alias}`}>
               {root.alias}
             </button>

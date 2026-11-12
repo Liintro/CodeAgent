@@ -43,3 +43,5 @@ export const sandboxStatusText = { untested: '检测中', available: '可用', u
 export const panelTitles = { changes: '变更', acceptance: '验收', memory: '记忆', run: '运行' } as const;
 export const settingsSections = ['模型', 'MCP 与联网', '沙箱与权限', '记忆', '通知', '外观'] as const;
 export type SettingsSection = typeof settingsSections[number];
+/** Tabs 的值用 ASCII：Radix 用它拼元素 id，含空格会让 aria-labelledby 失效。 */
+export const settingsKeys: Record<SettingsSection, string> = { 模型: 'model', 'MCP 与联网': 'mcp', 沙箱与权限: 'sandbox', 记忆: 'memory', 通知: 'notify', 外观: 'appearance' };

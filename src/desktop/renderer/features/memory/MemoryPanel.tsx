@@ -2,8 +2,9 @@ import { useCallback, useEffect, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import type { MemoryChange, MemoryItemView } from '../../../../shared/contracts';
 import { Button } from '@/components/ui/button';
-import { Textarea } from '@/components/ui/form';
-import { Badge, Empty, Switch } from '@/components/ui/misc';
+import { Textarea } from '@/components/ui/textarea';
+import { Badge, Empty } from '@/components/ui/misc';
+import { Switch } from '@/components/ui/switch';
 import { bridge, call } from '@/lib/bridge';
 import { cn } from '@/lib/utils';
 import { kindText, validityText } from '@/i18n/zh';
@@ -49,7 +50,7 @@ export function MemoryPanel() {
       </div>
       <div className="flex gap-2 border-b border-border px-3 py-2">
         <Textarea aria-label="记忆备注" rows={2} value={note} onChange={event => setNote(event.target.value)} placeholder="添加备注" className="text-xs" />
-        <Button variant="secondary" size="sm" className="self-end" disabled={!note.trim() || !hasRoots} onClick={addNote}>添加</Button>
+        <Button variant="outline" size="sm" className="self-end" disabled={!note.trim() || !hasRoots} onClick={addNote}>添加</Button>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
         {!items.length && <Empty>暂无记忆</Empty>}
@@ -65,7 +66,7 @@ export function MemoryPanel() {
                 <Textarea aria-label="编辑记忆" rows={4} value={draft} onChange={event => setDraft(event.target.value)} className="text-xs" />
                 <div className="flex gap-1.5">
                   <Button size="xs" disabled={!draft.trim()} onClick={() => change({ id: item.id, action: 'edit', text: draft })}>保存</Button>
-                  <Button variant="secondary" size="xs" onClick={() => setEditing(undefined)}>取消</Button>
+                  <Button variant="outline" size="xs" onClick={() => setEditing(undefined)}>取消</Button>
                 </div>
               </div>
             ) : (
@@ -74,13 +75,13 @@ export function MemoryPanel() {
                 <div className="mt-2 flex gap-1.5">
                   {item.status === 'active' ? (
                     <>
-                      <Button variant="secondary" size="xs" onClick={() => { setEditing(item.id); setDraft(item.text); }}>编辑</Button>
-                      <Button variant="secondary" size="xs" onClick={() => change({ id: item.id, action: 'reject' })}>标记错误</Button>
+                      <Button variant="outline" size="xs" onClick={() => { setEditing(item.id); setDraft(item.text); }}>编辑</Button>
+                      <Button variant="outline" size="xs" onClick={() => change({ id: item.id, action: 'reject' })}>标记错误</Button>
                     </>
                   ) : (
-                    <Button variant="secondary" size="xs" onClick={() => change({ id: item.id, action: 'restore' })}>恢复</Button>
+                    <Button variant="outline" size="xs" onClick={() => change({ id: item.id, action: 'restore' })}>恢复</Button>
                   )}
-                  <Button variant="destructive-outline" size="xs" onClick={() => change({ id: item.id, action: 'delete' })}>删除</Button>
+                  <Button variant="outline" className="text-destructive hover:text-destructive" size="xs" onClick={() => change({ id: item.id, action: 'delete' })}>删除</Button>
                 </div>
               </>
             )}

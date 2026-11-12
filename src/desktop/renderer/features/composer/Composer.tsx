@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowUp, Check, ChevronDown } from 'lucide-react';
+import { ArrowUp, ChevronDown } from 'lucide-react';
 import type { UserMode } from '../../../../shared/contracts';
 import { Button } from '@/components/ui/button';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from '@/components/ui/menu';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { bridge, call } from '@/lib/bridge';
 import { cn } from '@/lib/utils';
 import { modes } from '@/i18n/zh';
@@ -67,7 +67,7 @@ export function Composer() {
 }
 
 const modeTone: Record<UserMode, string> = {
-  plan: 'bg-accent', manual: 'bg-subtle', accept_edits: 'bg-success', auto: 'bg-warning', bypass: 'bg-danger',
+  plan: 'bg-primary', manual: 'bg-subtle', accept_edits: 'bg-success', auto: 'bg-warning', bypass: 'bg-danger',
 };
 
 /** 模式与命令运行方式合并为一个控件：左边选模式，右边是命令在哪里运行。 */
@@ -98,9 +98,8 @@ function ModeControl({ disabled }: { disabled: boolean }) {
                   <span className={cn('mt-1.5 size-2 shrink-0 rounded-full', modeTone[mode.value])} />
                   <span className="flex flex-1 flex-col">
                     <strong className="font-medium">{mode.label}</strong>
-                    <small className="text-[11px] text-muted">{unavailable ? '原生沙箱不可用' : mode.hint}</small>
+                    <small className="text-[11px] text-muted-foreground">{unavailable ? '原生沙箱不可用' : mode.hint}</small>
                   </span>
-                  {mode.value === current.value && <Check className="mt-0.5" />}
                 </DropdownMenuRadioItem>
               );
             })}
@@ -112,7 +111,7 @@ function ModeControl({ disabled }: { disabled: boolean }) {
           <span className={cn('size-1.5 rounded-full bg-current')} />
           {runner.text}
           {userMode === 'auto' && !sandboxed && sandboxStatus === 'available' && (
-            <button className="text-accent hover:underline" onClick={() => choose('auto')}>授权沙箱</button>
+            <button className="text-primary hover:underline" onClick={() => choose('auto')}>授权沙箱</button>
           )}
         </span>
       )}
@@ -125,7 +124,7 @@ function runnerText(mode: UserMode, sandboxed: boolean): { text: string; tone: s
   if (mode === 'bypass') return { text: '命令直接运行', tone: 'text-danger' };
   if (sandboxed) return { text: '命令在沙箱内运行', tone: 'text-success' };
   if (mode === 'auto') return { text: '沙箱不可用', tone: 'text-warning' };
-  return { text: '命令直接运行（无沙箱）', tone: 'text-muted' };
+  return { text: '命令直接运行（无沙箱）', tone: 'text-muted-foreground' };
 }
 
 function ModelSwitch({ disabled }: { disabled: boolean }) {
@@ -138,7 +137,7 @@ function ModelSwitch({ disabled }: { disabled: boolean }) {
       value={model?.id}
       disabled={disabled}
       onChange={event => call(bridge().selectModel(event.target.value))}
-      className="h-7 max-w-44 cursor-pointer truncate rounded-lg border border-transparent bg-transparent px-1.5 text-xs text-muted hover:bg-surface-2 focus:outline-none disabled:opacity-50"
+      className="h-7 max-w-44 cursor-pointer truncate rounded-lg border border-transparent bg-transparent px-1.5 text-xs text-muted-foreground hover:bg-surface-2 focus:outline-none disabled:opacity-50"
     >
       {models.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
     </select>
