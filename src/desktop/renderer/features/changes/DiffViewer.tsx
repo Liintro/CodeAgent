@@ -29,6 +29,7 @@ export function DiffViewer({ diff, inline }: { diff: DiffView; inline: boolean }
         automaticLayout: true,
         renderSideBySide: !inline,
         useInlineViewWhenSpaceIsLimited: true,
+        renderSideBySideInlineBreakpoint: 600,
         renderOverviewRuler: false,
         minimap: { enabled: false },
         scrollBeyondLastLine: false,

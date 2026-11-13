@@ -1,6 +1,8 @@
 // 只加载编辑器核心与常用语言的着色规则（Monarch），不加载语言服务；整个模块在第一次打开 diff 时才导入。
 import * as monaco from 'monaco-editor/editor/editor.api';
 import EditorWorker from 'monaco-editor/editor/editor.worker.js?worker';
+// diff 边栏的 +/- 与折叠图标来自 codicon 字体；编辑器核心不会自动引入它。
+import 'monaco-editor/features/codicon/register';
 import 'monaco-editor/languages/definitions/java/register';
 import 'monaco-editor/languages/definitions/kotlin/register';
 import 'monaco-editor/languages/definitions/typescript/register';
