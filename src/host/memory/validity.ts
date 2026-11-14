@@ -29,6 +29,11 @@ export async function evaluate(repo: RepoRef, items: MemoryRow[], anchorsOf: Map
 
   for (const item of items) {
     const outcomes = (anchorsOf.get(item.id) ?? []).map(anchor => ({ anchor, outcome: judge(anchor, current.get(anchor.path), renamed) }));
+    // 没有构建文件可锚定的验证命令无从核对，不能显示为“当前有效”。
+    if (item.kind === 'convention' && !outcomes.length) {
+      result.set(item.id, { validity: 'unverifiable', changed: [] });
+      continue;
+    }
     const changed = outcomes.filter(({ outcome }) => outcome === 'drifted' || outcome === 'missing').map(({ anchor }) => anchor.path);
     const allMatch = outcomes.every(({ outcome }) => outcome === 'match');
     let validity: MemoryValidity = 'current';
