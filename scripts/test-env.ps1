@@ -17,7 +17,7 @@ $env:GOPATH = Join-Path $Root 'go\path'
 $env:GOTOOLCHAIN = 'local'
 $env:RUSTUP_HOME = Join-Path $Toolchains 'rust\rustup'
 $env:CARGO_HOME = Join-Path $Toolchains 'rust\cargo'
-# Pinned toolchains installed on E: (see doc/Batch5_Execution_and_Acceptance_Report.md); prepended for this session only.
+# Pinned toolchains installed on E:; prepended for this session only.
 $paths = 'cmake-4.4.5\bin', 'winlibs-gcc-16.2.0\bin', 'go1.27.3\bin', 'rust\cargo\bin' | ForEach-Object { Join-Path $Toolchains $_ }
 # The existing Keil MDK install (not installed by this project): UV4 and ARMCC.
 $paths = @($paths) + @(Join-Path $Keil 'UV4') + @(Join-Path $Keil 'ARM\ARMCC\bin') | Where-Object { Test-Path $_ }

@@ -68,6 +68,5 @@ npm run pack:win            # 目录包，输出到 build/release/win-unpacked/
 
 ## 分支
 
-- `main`：当前发布版本。
-- `stage/*`：各开发阶段（桌面基线、Harness 运行时、验证与恢复、记忆、工程能力、策略迭代实验、评测加固）。
-- `research/*`：技术探针与评测；`fix/*`：专项修复的开发历史。
+- `main`：稳定版本，发布从这里打 tag。
+- `feat/*`、`fix/*`、`docs/*`：功能、修复与文档分支，验证通过后以合并提交并入 `main`。

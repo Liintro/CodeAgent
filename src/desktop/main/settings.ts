@@ -92,7 +92,7 @@ export class SettingsStore {
       this.settings = {
         models,
         activeModelId: models.some(model => model.id === requestedActive) ? requestedActive : models[0]?.id,
-        // 兼容 Batch 1 的单目录字段。
+        // 兼容早期版本的单目录字段。
         recentRoots: Array.isArray(value.recentRoots)
           ? value.recentRoots.filter((item): item is string => typeof item === 'string')
           : typeof value.lastRootPath === 'string' ? [value.lastRootPath] : [],

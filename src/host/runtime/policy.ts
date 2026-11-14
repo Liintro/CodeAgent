@@ -1,4 +1,4 @@
-// Harness 策略包：Batch 6 自改进循环唯一可以修改的产品行为。
+// Harness 策略包：自改进循环唯一可以修改的产品行为。
 // 一个策略包目录 = params.json（白名单参数）+ playbook.md（追加到系统提示的经验手册）+ 可选 manifest.json（谱系元数据，不参与身份）。
 // 身份 policyId 只由生效内容（参数 + 手册）决定：内容相同的两个包就是同一个策略。
 import { createHash } from 'node:crypto';

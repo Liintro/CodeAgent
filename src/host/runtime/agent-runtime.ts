@@ -141,7 +141,7 @@ export class AgentRuntime {
   private readonly startedAt = new Map<string, number>();
   private readonly library: DocumentLibrary;
 
-  // 未提供 dataDir 时（Batch 1/2 的运行时测试）账本与会话都只在内存中。
+  // 未提供 dataDir 时（运行时测试）账本与会话都只在内存中。
   constructor(
     private readonly hostInstanceId: string,
     private readonly rulesPath: string,
