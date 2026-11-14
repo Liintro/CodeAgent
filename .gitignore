@@ -2,8 +2,12 @@
 /build/
 /resources/generated/
 /doc/
+/research/
 /.secrets/
 /.research/
+/.workbuddy/
+.env
+.env.local
 *.log
 /tests/fixtures/projects/**/target/
 __pycache__/
