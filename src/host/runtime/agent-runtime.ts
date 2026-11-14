@@ -579,7 +579,6 @@ export class AgentRuntime {
       const startTrees = mode !== 'plan' ? await this.snapshotRoots(task, runId, 'run_start') : new Map<string, string>();
       const mutationsAtStart = new Map(task.mutations);
       const first = options.verifyOnly ? undefined : await this.firstPrompt(task, text, resumedFrom);
-      const buildPrompt = () => `${rules.text}\n\n${this.modeStatement(task)}\n\n${this.stateBlock(task)}`;
       let agent: Agent | undefined;
       // 召回的历史记忆只存在于这个数组里：随每次请求插入到锚点消息之前，从不写入 Pi 会话。
       const slots: Slot[] = [];
