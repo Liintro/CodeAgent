@@ -1,5 +1,4 @@
 import { basename, extname } from 'node:path';
-import { estimateTokens } from '@earendil-works/pi-coding-agent';
 import type { MemoryKind, MemoryValidity, RootView } from '../../shared/contracts.js';
 import { repoOf, type RepoRef } from './repo.js';
 import type { Anchor, MemoryRow, MemoryStore } from './store.js';
@@ -143,8 +142,12 @@ async function render(index: number, item: MemoryRow, evaluation: Evaluation, re
 
 const indent = (text: string) => text.split('\n').map(line => `   ${line}`).join('\n');
 
+// Pi 的 estimateTokens 一律按“字符数 / 4”，中日韩文字实际接近每字一个 token，按此计会严重低估。
+const CJK = /[　-〿぀-ヿ㐀-䶿一-鿿가-힯＀-￯]/g;
+
 export function tokensOf(text: string): number {
-  return estimateTokens({ role: 'user', content: [{ type: 'text', text }], timestamp: 0 });
+  const cjk = text.match(CJK)?.length ?? 0;
+  return cjk + Math.ceil((text.length - cjk) / 4);
 }
 
 // ---- 请求级注入：纯函数，不读写任何存储 ----
@@ -155,7 +158,7 @@ export function injectSlots<T extends { role: string; timestamp?: number; conten
   return messages.flatMap(message => [...slots.filter(slot => message.role === 'user' && message.timestamp === slot.anchorTimestamp && textOf(message) === slot.anchorText).map(slot => make(slot.text)), message]);
 }
 
-function textOf(message: { content?: unknown }): string {
+export function textOf(message: { content?: unknown }): string {
   const { content } = message;
   return typeof content === 'string' ? content : Array.isArray(content) ? content.map(part => (part as { text?: string }).text ?? '').join('') : '';
 }
