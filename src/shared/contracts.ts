@@ -228,7 +228,7 @@ export type WebSearchInput = { enabled: boolean; searchUrl?: string; apiKeyHeade
 export type RunEventType =
   | 'run.started' | 'git.snapshot' | 'tool.requested' | 'permission.decided' | 'tool.started'
   | 'tool.finished' | 'model.usage' | 'run.ended'
-  | 'verification.started' | 'verification.finished' | 'repair.requested' | 'compaction.done' | 'delivery.changed'
+  | 'verification.started' | 'verification.finished' | 'repair.requested' | 'compaction.done' | 'compaction.failed' | 'delivery.changed'
   | 'memory.recalled' | 'memory.captured' | 'memory.capture_failed' | 'memory.changed' | 'model.retry';
 export type RunEvent = { runId: string; seq: number; at: number; type: RunEventType; data: Record<string, unknown> };
 

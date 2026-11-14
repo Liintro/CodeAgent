@@ -609,7 +609,15 @@ ${this.stateBlock(task)}`,
             const slotTokens = slots.reduce((sum, slot) => sum + tokensOf(slot.text), 0);
             const force = this.active?.id === runId && this.active.forceCompaction === true;
             if (force) this.active!.forceCompaction = false;
-            const outcome = await compactIfNeeded(task.session, request.model, this.apiKey, streamFn, tokensOf(leading.map(textOf).join('\n')) + slotTokens, signal, force);
+            let outcome: CompactionOutcome | undefined;
+            try {
+              outcome = await compactIfNeeded(task.session, request.model, this.apiKey, streamFn, tokensOf(leading.map(textOf).join('\n')) + slotTokens, signal, force);
+            } catch (error) {
+              if (signal?.aborted) throw error;
+              // 摘要失败不终止 Run：本次请求不压缩照常发送；若因此以 length 停止，由 length 恢复路径处理。
+              this.recordCompactionFailure(task, runId, error);
+              return undefined;
+            }
             if (!outcome) return undefined;
             this.recordCompaction(task, runId, outcome);
             const kept = task.session.buildSessionContext().messages as AgentMessage[];
@@ -1149,6 +1157,12 @@ ${this.stateBlock(task)}`,
     this.ledger.appendEvent(runId, 'compaction.done', { tokensBefore: outcome.tokensBefore, tokensAfter: outcome.tokensAfter, firstKeptEntryId: outcome.firstKeptEntryId, usage });
     if (usage?.totalTokens) this.ledger.appendEvent(runId, 'model.usage', { ...usage, purpose: 'compaction' });
     task.timeline.push({ kind: 'notice', id: randomUUID(), text: '较早的对话已压缩为摘要' });
+    this.emitSnapshot();
+  }
+
+  private recordCompactionFailure(task: TaskState, runId: string, error: unknown): void {
+    this.ledger.appendEvent(runId, 'compaction.failed', { error: createError('COMPACTION_FAILED', '上下文压缩失败', error, this.apiKey) });
+    task.timeline.push({ kind: 'notice', id: randomUUID(), text: '上下文压缩失败，本次请求不压缩继续' });
     this.emitSnapshot();
   }
 
