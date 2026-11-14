@@ -155,7 +155,25 @@ export function tokensOf(text: string): number {
 /** 在锚点消息之前插入召回文本；没有槽位时原样返回同一个数组，请求体与没有记忆时完全一致。 */
 export function injectSlots<T extends { role: string; timestamp?: number; content?: unknown }>(messages: T[], slots: Slot[], make: (text: string) => T): T[] {
   if (!slots.length) return messages;
-  return messages.flatMap(message => [...slots.filter(slot => message.role === 'user' && message.timestamp === slot.anchorTimestamp && textOf(message) === slot.anchorText).map(slot => make(slot.text)), message]);
+  return messages.flatMap(message => [...slots.filter(slot => anchors(message, slot)).map(slot => make(slot.text)), message]);
+}
+
+/**
+ * 压缩后锚点消息可能已并入摘要：这些槽位改锚到第一条保留的 user 或 assistant 消息，召回文本照常随请求注入。
+ * 不锚到 toolResult，以免把工具调用和它的结果拆开。
+ */
+export function reanchorSlots(slots: Slot[], messages: { role: string; timestamp?: number; content?: unknown }[]): void {
+  const target = messages.find(message => message.role === 'user' || message.role === 'assistant');
+  if (!target?.timestamp) return;
+  for (const slot of slots) {
+    if (messages.some(message => anchors(message, slot))) continue;
+    slot.anchorTimestamp = target.timestamp;
+    slot.anchorText = textOf(target);
+  }
+}
+
+function anchors(message: { timestamp?: number; content?: unknown }, slot: Slot): boolean {
+  return message.timestamp === slot.anchorTimestamp && textOf(message) === slot.anchorText;
 }
 
 export function textOf(message: { content?: unknown }): string {

@@ -46,7 +46,7 @@ import {
 import { CONTINUE_TEXT, DEFAULT_MAX_REPAIRS, IMPLEMENT_PLAN_TEXT, VERIFY_ONLY_TEXT } from '../../shared/constants.js';
 import { createDocumentTools, DocumentLibrary, type DocumentRecord } from '../documents/index.js';
 import { captureOutcome } from '../memory/capture.js';
-import { injectSlots, recall, textOf, tokensOf, type Failure, type Slot } from '../memory/recall.js';
+import { injectSlots, reanchorSlots, recall, textOf, tokensOf, type Failure, type Slot } from '../memory/recall.js';
 import { repoOf, type RepoRef } from '../memory/repo.js';
 import { MemoryStore } from '../memory/store.js';
 import { evaluate, type Evaluation } from '../memory/validity.js';
@@ -612,7 +612,9 @@ ${this.stateBlock(task)}`,
             const outcome = await compactIfNeeded(task.session, request.model, this.apiKey, streamFn, tokensOf(leading.map(textOf).join('\n')) + slotTokens, signal, force);
             if (!outcome) return undefined;
             this.recordCompaction(task, runId, outcome);
-            return { context: { ...request.context, messages: [...leading, ...task.session.buildSessionContext().messages as AgentMessage[]] } };
+            const kept = task.session.buildSessionContext().messages as AgentMessage[];
+            reanchorSlots(slots, kept);
+            return { context: { ...request.context, messages: [...leading, ...kept] } };
           },
         });
         if (this.active?.id === runId) this.active.agent = agent;
