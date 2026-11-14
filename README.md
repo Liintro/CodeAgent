@@ -6,7 +6,12 @@ CodeAgent 是面向 Windows 的中文 AI 编程工作台，用于在本地代码
 
 ## 下载
 
-在 [Releases](https://github.com/Liintro/CodeAgent/releases) 下载 `CodeAgent-<版本>-windows-x64.exe`，双击即可运行，无需安装。首次启动后在“设置 → 模型”中填写 OpenAI 兼容端点的 Base URL、Model ID 和 API Key。
+在 [Releases](https://github.com/Liintro/CodeAgent/releases) 下载以下任一文件：
+
+- `CodeAgent-<版本>-windows-x64-setup.exe`：安装程序，双击安装后从开始菜单或桌面快捷方式启动。
+- `CodeAgent-<版本>-windows-x64.zip`：免安装版，解压后运行其中的 `CodeAgent.exe`。
+
+首次启动后在“设置 → 模型”中填写 OpenAI 兼容端点的 Base URL、Model ID 和 API Key。
 
 系统要求：Windows 10/11 x64。运行项目的构建和测试需要该项目自己的工具链（如 JDK、Maven、Node.js、Python）。
 
@@ -51,7 +56,7 @@ npm run dev
 打包：
 
 ```powershell
-npm run pack:win:portable   # 单文件便携版 exe，输出到 build/release/
+npm run pack:win:release    # 安装程序与免安装 zip，输出到 build/release/
 npm run pack:win            # 目录包，输出到 build/release/win-unpacked/
 ```
 

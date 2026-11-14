@@ -20,10 +20,9 @@
     "test:desktop": "node --test --test-concurrency=1 --test-timeout=120000 tests/desktop/*.test.mjs",
     "test:live": "node --test --test-concurrency=1 --test-timeout=300000 tests/live/*.test.mjs",
     "pack:win": "npm run build && electron-builder --win --x64 --dir",
-    "pack:win:portable": "npm run build && electron-builder --win portable --x64 --publish never",
     "test:package": "node --test --test-concurrency=1 --test-timeout=300000 tests/package/*.test.mjs",
     "test:unit": "node --test tests/unit/*.test.mjs",
-    "pack:win:portable": "npm run build && electron-builder --win portable --x64 --publish never"
+    "pack:win:release": "npm run build && electron-builder --win nsis zip --x64 --publish never"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "1.4.0",

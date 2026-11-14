@@ -15,5 +15,15 @@ files:
 win:
   target:
     - dir
-portable:
-  artifactName: CodeAgent-${version}-windows-${arch}.exe
+  # zip 的文件名；安装程序使用 nsis.artifactName。
+  artifactName: CodeAgent-${version}-windows-${arch}.${ext}
+# 发行版：安装程序（安装一次，之后直接启动）与免安装 zip。
+# 不用 portable：它每次启动都要把 1 万多个文件解压到临时目录，耗时数分钟。
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  installerLanguages: [zh_CN]
+  language: '2052'
+  shortcutName: CodeAgent
+  artifactName: CodeAgent-${version}-windows-${arch}-setup.${ext}
