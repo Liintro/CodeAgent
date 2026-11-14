@@ -3,12 +3,12 @@
 /resources/generated/
 /doc/
 /research/
+/tests/
 /.secrets/
 /.research/
 /.workbuddy/
 .env
 .env.local
 *.log
-/tests/fixtures/projects/**/target/
 __pycache__/
 .pytest_cache/
