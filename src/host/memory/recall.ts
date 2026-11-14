@@ -176,7 +176,7 @@ function anchors(message: { timestamp?: number; content?: unknown }, slot: Slot)
   return message.timestamp === slot.anchorTimestamp && textOf(message) === slot.anchorText;
 }
 
-export function textOf(message: { content?: unknown }): string {
+function textOf(message: { content?: unknown }): string {
   const { content } = message;
   return typeof content === 'string' ? content : Array.isArray(content) ? content.map(part => (part as { text?: string }).text ?? '').join('') : '';
 }

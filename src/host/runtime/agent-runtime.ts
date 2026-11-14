@@ -46,7 +46,7 @@ import {
 import { CONTINUE_TEXT, DEFAULT_MAX_REPAIRS, IMPLEMENT_PLAN_TEXT, VERIFY_ONLY_TEXT } from '../../shared/constants.js';
 import { createDocumentTools, DocumentLibrary, type DocumentRecord } from '../documents/index.js';
 import { captureOutcome } from '../memory/capture.js';
-import { injectSlots, reanchorSlots, recall, textOf, tokensOf, type Failure, type Slot } from '../memory/recall.js';
+import { injectSlots, reanchorSlots, recall, tokensOf, type Failure, type Slot } from '../memory/recall.js';
 import { repoOf, type RepoRef } from '../memory/repo.js';
 import { MemoryStore } from '../memory/store.js';
 import { evaluate, type Evaluation } from '../memory/validity.js';
@@ -607,11 +607,12 @@ ${this.stateBlock(task)}`,
             // 系统提示是对话记录开头的 system 消息，不在会话里；压缩后需要原样放回。
             const leading = request.context.messages.filter(message => message.role === 'system');
             const slotTokens = slots.reduce((sum, slot) => sum + tokensOf(slot.text), 0);
+            // system 消息除正文外还带 sections 与工具定义，按整条消息的 JSON 计数。
             const force = this.active?.id === runId && this.active.forceCompaction === true;
             if (force) this.active!.forceCompaction = false;
             let outcome: CompactionOutcome | undefined;
             try {
-              outcome = await compactIfNeeded(task.session, request.model, this.apiKey, streamFn, tokensOf(leading.map(textOf).join('\n')) + slotTokens, signal, force);
+              outcome = await compactIfNeeded(task.session, request.model, this.apiKey, streamFn, tokensOf(JSON.stringify(leading)) + slotTokens, signal, force);
             } catch (error) {
               if (signal?.aborted) throw error;
               // 摘要失败不终止 Run：本次请求不压缩照常发送；若因此以 length 停止，由 length 恢复路径处理。
