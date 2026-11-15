@@ -46,7 +46,7 @@ import {
 import { CONTINUE_TEXT, DEFAULT_MAX_REPAIRS, IMPLEMENT_PLAN_TEXT, VERIFY_ONLY_TEXT } from '../../shared/constants.js';
 import { createDocumentTools, DocumentLibrary, type DocumentRecord } from '../documents/index.js';
 import { captureOutcome } from '../memory/capture.js';
-import { injectSlots, recall, tokensOf, type Failure, type Slot } from '../memory/recall.js';
+import { injectSlots, reanchorSlots, recall, tokensOf, type Failure, type Slot } from '../memory/recall.js';
 import { repoOf, type RepoRef } from '../memory/repo.js';
 import { MemoryStore } from '../memory/store.js';
 import { evaluate, type Evaluation } from '../memory/validity.js';
@@ -579,7 +579,6 @@ export class AgentRuntime {
       const startTrees = mode !== 'plan' ? await this.snapshotRoots(task, runId, 'run_start') : new Map<string, string>();
       const mutationsAtStart = new Map(task.mutations);
       const first = options.verifyOnly ? undefined : await this.firstPrompt(task, text, resumedFrom);
-      const buildPrompt = () => `${rules.text}\n\n${this.modeStatement(task)}\n\n${this.stateBlock(task)}`;
       let agent: Agent | undefined;
       // 召回的历史记忆只存在于这个数组里：随每次请求插入到锚点消息之前，从不写入 Pi 会话。
       const slots: Slot[] = [];
@@ -608,12 +607,23 @@ ${this.stateBlock(task)}`,
             // 系统提示是对话记录开头的 system 消息，不在会话里；压缩后需要原样放回。
             const leading = request.context.messages.filter(message => message.role === 'system');
             const slotTokens = slots.reduce((sum, slot) => sum + tokensOf(slot.text), 0);
+            // system 消息除正文外还带 sections 与工具定义，按整条消息的 JSON 计数。
             const force = this.active?.id === runId && this.active.forceCompaction === true;
             if (force) this.active!.forceCompaction = false;
-            const outcome = await compactIfNeeded(task.session, request.model, this.apiKey, streamFn, Math.ceil(JSON.stringify(leading).length / 4) + slotTokens, signal, force);
+            let outcome: CompactionOutcome | undefined;
+            try {
+              outcome = await compactIfNeeded(task.session, request.model, this.apiKey, streamFn, tokensOf(JSON.stringify(leading)) + slotTokens, signal, force);
+            } catch (error) {
+              if (signal?.aborted) throw error;
+              // 摘要失败不终止 Run：本次请求不压缩照常发送；若因此以 length 停止，由 length 恢复路径处理。
+              this.recordCompactionFailure(task, runId, error);
+              return undefined;
+            }
             if (!outcome) return undefined;
             this.recordCompaction(task, runId, outcome);
-            return { context: { ...request.context, messages: [...leading, ...task.session.buildSessionContext().messages as AgentMessage[]] } };
+            const kept = task.session.buildSessionContext().messages as AgentMessage[];
+            reanchorSlots(slots, kept);
+            return { context: { ...request.context, messages: [...leading, ...kept] } };
           },
         });
         if (this.active?.id === runId) this.active.agent = agent;
@@ -1148,6 +1158,12 @@ ${this.stateBlock(task)}`,
     this.ledger.appendEvent(runId, 'compaction.done', { tokensBefore: outcome.tokensBefore, tokensAfter: outcome.tokensAfter, firstKeptEntryId: outcome.firstKeptEntryId, usage });
     if (usage?.totalTokens) this.ledger.appendEvent(runId, 'model.usage', { ...usage, purpose: 'compaction' });
     task.timeline.push({ kind: 'notice', id: randomUUID(), text: '较早的对话已压缩为摘要' });
+    this.emitSnapshot();
+  }
+
+  private recordCompactionFailure(task: TaskState, runId: string, error: unknown): void {
+    this.ledger.appendEvent(runId, 'compaction.failed', { error: createError('COMPACTION_FAILED', '上下文压缩失败', error, this.apiKey) });
+    task.timeline.push({ kind: 'notice', id: randomUUID(), text: '上下文压缩失败，本次请求不压缩继续' });
     this.emitSnapshot();
   }
 

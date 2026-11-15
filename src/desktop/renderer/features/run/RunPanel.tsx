@@ -11,7 +11,7 @@ import { useView } from '@/store/snapshot';
 const eventText: Partial<Record<RunEvent['type'], string>> = {
   'run.started': '开始运行', 'run.ended': '运行结束', 'git.snapshot': '记录 Git 基线', 'tool.requested': '请求工具', 'permission.decided': '权限决定',
   'tool.started': '工具开始', 'tool.finished': '工具结束', 'model.usage': '模型用量', 'verification.started': '开始验证', 'verification.finished': '验证结束',
-  'repair.requested': '请求修复', 'compaction.done': '压缩上下文', 'delivery.changed': '交付状态变化', 'memory.recalled': '召回记忆', 'memory.captured': '记录记忆',
+  'repair.requested': '请求修复', 'compaction.done': '压缩上下文', 'compaction.failed': '压缩上下文失败','delivery.changed': '交付状态变化', 'memory.recalled': '召回记忆', 'memory.captured': '记录记忆',
   'memory.capture_failed': '记录记忆失败', 'memory.changed': '记忆变化', 'model.retry': '模型重试',
 };
 

@@ -113,6 +113,10 @@ function buildFilesFor(command: string): string[] {
   if (/\b(mvn|mvnw)/i.test(command)) return ['pom.xml'];
   if (/\bgradle/i.test(command)) return ['build.gradle', 'build.gradle.kts'];
   if (/pytest/i.test(command)) return ['pyproject.toml', 'pytest.ini'];
+  if (/\b(npm|pnpm|yarn)\b/i.test(command)) return ['package.json'];
+  if (/\bcargo\b/i.test(command)) return ['Cargo.toml'];
+  if (/\bgo\s+(build|test|vet|run)\b/i.test(command)) return ['go.mod'];
+  if (/\b(cmake|ctest)\b/i.test(command)) return ['CMakeLists.txt'];
   return [];
 }
 
