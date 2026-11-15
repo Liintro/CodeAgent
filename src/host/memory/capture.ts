@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { basename } from 'node:path';
 import { CONTINUE_TEXT, IMPLEMENT_PLAN_TEXT, VERIFY_ONLY_TEXT } from '../../shared/constants.js';
-import type { Acceptance, DeliveryView, RootDelivery, RootView, VerificationResult } from '../../shared/contracts.js';
+import type { Acceptance, DeliveryView, RootDelivery, RootView, VerificationResult } from '../../shared/contracts/index.js';
 import type { Ledger } from '../runtime/ledger.js';
 import { failureHash } from '../runtime/verification.js';
 import * as git from '../workspace/git.js';

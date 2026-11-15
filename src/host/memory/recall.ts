@@ -1,5 +1,5 @@
 import { basename, extname } from 'node:path';
-import type { MemoryKind, MemoryValidity, RootView } from '../../shared/contracts.js';
+import type { MemoryKind, MemoryValidity, RootView } from '../../shared/contracts/index.js';
 import { repoOf, type RepoRef } from './repo.js';
 import type { Anchor, MemoryRow, MemoryStore } from './store.js';
 import { driftNote, evaluate, type Evaluation } from './validity.js';

@@ -1,4 +1,6 @@
-// 运行时常量单独放在这里：contracts.ts 只有类型，preload 的 CommonJS 编译也会处理它，不能带运行时导出。
+// 运行时常量单独放在这里：contracts/ 下只有类型，preload 的 CommonJS 编译也会处理它，不能带运行时导出。
+// 主进程与 Host 之间的消息格式版本；改动 HostCommand、WorkbenchEvent 或快照结构时递增。
+export const PROTOCOL_VERSION = 1;
 export const DEFAULT_MAX_REPAIRS = 3;
 export const IMPLEMENT_PLAN_TEXT = '请按照上面的计划开始实施。';
 export const CONTINUE_TEXT = '请从当前的实际状态继续完成上一次被中断的任务。';

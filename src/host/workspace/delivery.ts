@@ -1,6 +1,6 @@
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { Acceptance, Delivery, DeliveryActionResult, DeliveryView, RootDelivery, RootDeliveryState, RootView, VerificationResult } from '../../shared/contracts.js';
+import type { Acceptance, Delivery, DeliveryActionResult, DeliveryView, RootDelivery, RootDeliveryState, RootView, VerificationResult } from '../../shared/contracts/index.js';
 import type { DeliveryRow, Ledger } from '../runtime/ledger.js';
 import * as git from './git.js';
 

@@ -1,6 +1,6 @@
 import type { SessionManager } from '@earendil-works/pi-coding-agent';
 import { FEEDBACK_PREFIX, RECOVERY_PREFIX } from '../../shared/constants.js';
-import type { MemoryShown, RootView, RunEvent, TimelineItem, ToolItem, ToolState, VerificationItem } from '../../shared/contracts.js';
+import type { MemoryShown, RootView, RunEvent, TimelineItem, ToolItem, ToolState, VerificationItem } from '../../shared/contracts/index.js';
 
 type Timed = { at: number; item: TimelineItem };
 

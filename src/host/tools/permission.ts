@@ -1,4 +1,4 @@
-import type { ApprovalDecision, ApprovalRequest, PermissionSetting, UserMode } from '../../shared/contracts.js';
+import type { ApprovalDecision, ApprovalRequest, PermissionSetting, UserMode } from '../../shared/contracts/index.js';
 
 export type ToolClass = 'read' | 'edit' | 'shell' | 'mcp' | 'mcp_trusted';
 export type Verdict = 'allow' | 'ask' | 'block';

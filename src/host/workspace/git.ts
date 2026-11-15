@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { copyFile, mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import type { DiffView, FileChange } from '../../shared/contracts.js';
+import type { DiffView, FileChange } from '../../shared/contracts/index.js';
 
 export type GitInfo = { gitRoot: string; branch?: string; head?: string };
 

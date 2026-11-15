@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import type { PowerShellOperations } from '@earendil-works/pi-coding-agent';
 import { FEEDBACK_PREFIX } from '../../shared/constants.js';
-import type { ParsedFailure, RootView, VerificationResult, VerifyCommand } from '../../shared/contracts.js';
+import type { ParsedFailure, RootView, VerificationResult, VerifyCommand } from '../../shared/contracts/index.js';
 import { parseFailure, sandboxBlocked } from '../engineering/index.js';
 
 type Exec = PowerShellOperations['exec'];

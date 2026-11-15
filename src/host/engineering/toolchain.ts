@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { delimiter, join, relative, sep } from 'node:path';
-import type { Diagnostic, ParsedFailure } from '../../shared/contracts.js';
+import type { Diagnostic, ParsedFailure } from '../../shared/contracts/index.js';
 
 // 每个生态一个普通对象：检测项目、给出建议命令（PowerShell 5.1 语法）、解析真实输出。没有注册表或插件机制。
 export type Proposal = { label: string; command: string; timeoutSeconds: number; toolchain?: string; problem?: string };

@@ -42,7 +42,7 @@ import {
   type VerificationResult,
   type WorkbenchEvent,
   type WorkbenchSnapshot,
-} from '../../shared/contracts.js';
+} from '../../shared/contracts/index.js';
 import { CONTINUE_TEXT, DEFAULT_MAX_REPAIRS, IMPLEMENT_PLAN_TEXT, VERIFY_ONLY_TEXT } from '../../shared/constants.js';
 import { createDocumentTools, DocumentLibrary, type DocumentRecord } from '../documents/index.js';
 import { captureOutcome } from '../memory/capture.js';

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { DEFAULT_MAX_BYTES, truncateHead } from '@earendil-works/pi-coding-agent';
 import { McpClient, McpConnectionClosedError, StdioTransport, StreamableHttpTransport, toLlmContent, type McpTransport } from '@earendil-works/pi-mcp';
-import type { McpServerDefinition, McpServerStatus } from '../../shared/contracts.js';
+import type { McpServerDefinition, McpServerStatus } from '../../shared/contracts/index.js';
 
 export type McpBinding = { server: string; tool: string; trustedReadOnly: boolean };
 const STRUCTURED_LIMIT = 256 * 1024;

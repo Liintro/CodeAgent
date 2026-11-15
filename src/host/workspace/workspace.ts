@@ -3,7 +3,7 @@ import { readFile, realpath, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { loadProjectContextFiles } from '@earendil-works/pi-coding-agent';
-import type { RootView } from '../../shared/contracts.js';
+import type { RootView } from '../../shared/contracts/index.js';
 import { detect } from './git.js';
 
 export async function openRoot(path: string, existing: RootView[]): Promise<RootView> {

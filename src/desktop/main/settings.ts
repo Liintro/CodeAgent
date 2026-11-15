@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { copyFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { safeStorage } from 'electron';
-import type { KeyChange, ModelInput, ModelProfile, Preferences, ThinkingLevel } from '../../shared/contracts.js';
+import type { KeyChange, ModelInput, ModelProfile, Preferences, ThinkingLevel } from '../../shared/contracts/index.js';
 
 type StoredModel = ModelInput & { encryptedApiKey?: string };
 type Settings = {

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
-import type { DocumentKind, DocumentView } from '../../shared/contracts.js';
+import type { DocumentKind, DocumentView } from '../../shared/contracts/index.js';
 import { extractDocx } from './docx.js';
 import { extractPdf, renderPdfPage } from './pdf.js';
 import { extractHtml, extractMarkdown, extractPlainText } from './text.js';

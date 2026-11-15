@@ -5,7 +5,7 @@ import { access, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promise
 import { hostname, tmpdir, userInfo } from 'node:os';
 import { delimiter, join } from 'node:path';
 import type { PowerShellOperations } from '@earendil-works/pi-coding-agent';
-import type { SandboxStatus } from '../../shared/contracts.js';
+import type { SandboxStatus } from '../../shared/contracts/index.js';
 
 const UTF8_OUTPUT_PREFIX = 'try { [Console]::OutputEncoding=[System.Text.Encoding]::UTF8 } catch {}\n';
 

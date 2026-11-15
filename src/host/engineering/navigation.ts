@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { basename, dirname, extname, join } from 'node:path';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
-import type { RootView } from '../../shared/contracts.js';
+import type { RootView } from '../../shared/contracts/index.js';
 
 // 确定性的代码导航：符号轮廓、定义查找、相关文件（测试/源码配对、引用方、Git 共同修改）。
 // 只读，输出一律带 path:起-止 行号，便于核对引用是否与当前文件一致。

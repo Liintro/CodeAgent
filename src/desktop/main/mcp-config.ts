@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import type { McpServerDefinition } from '../../shared/contracts.js';
+import type { McpServerDefinition } from '../../shared/contracts/index.js';
 
 const NAME_PATTERN = /^[A-Za-z0-9_-]{1,32}$/;
 

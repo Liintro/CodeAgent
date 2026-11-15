@@ -5,7 +5,7 @@ import {
   createEditTool, createFindTool, createGrepTool, createLsTool, createPowerShellTool, createReadTool, createWriteTool,
   DEFAULT_MAX_BYTES, truncateHead,
 } from '@earendil-works/pi-coding-agent';
-import type { RootView, RunnerKind } from '../../shared/contracts.js';
+import type { RootView, RunnerKind } from '../../shared/contracts/index.js';
 import { readOnly, type GitReadOp } from '../workspace/git.js';
 import type { SandboxRunner } from './sandbox.js';
 

@@ -30,9 +30,10 @@ import type {
   UserMode,
   WorkbenchEvent,
   WorkbenchSnapshot,
-} from '../../shared/contracts.js';
+} from '../../shared/contracts/index.js';
 import { McpConfig } from './mcp-config.js';
 import { attentionFor, type Attention } from '../../shared/attention.js';
+import { PROTOCOL_VERSION } from '../../shared/constants.js';
 import { SettingsStore } from './settings.js';
 
 const USER_MODES: UserMode[] = ['plan', 'manual', 'accept_edits', 'auto', 'bypass'];
@@ -196,6 +197,7 @@ async function startHost(): Promise<Reply<void>> {
   const generated = (name: string) => fileURLToPath(new URL(`../../../../resources/generated/${name}`, import.meta.url));
   const initialized = await hostRequest<{ node: string; execPath: string }>({
     type: 'initialize',
+    protocolVersion: PROTOCOL_VERSION,
     hostInstanceId,
     dataDir: app.getPath('userData'),
     rulesPath: generated('AGENTS.md'),
