@@ -4,6 +4,7 @@ import {
   calculateContextTokens, estimateTokens, findCutPoint, generateSummaryWithUsage, sessionEntryToContextMessages, shouldCompact,
   type SessionEntry, type SessionManager,
 } from '@earendil-works/pi-coding-agent';
+import type { CompactionSettings } from './policy.js';
 
 type Settings = { enabled: boolean; reserveTokens: number; keepRecentTokens: number };
 
@@ -22,12 +23,12 @@ const INSTRUCTIONS = [
 const PI_OUTPUT_SAFETY = 4096;
 
 // 窗口由用户填写，所以预留与保留都按窗口比例封顶。
-export function settingsFor(contextWindow: number, maxOutputTokens: number): Settings {
-  const reserve = Math.max(maxOutputTokens + PI_OUTPUT_SAFETY, Math.min(16384, Math.floor(contextWindow * 0.25)));
+export function settingsFor(contextWindow: number, maxOutputTokens: number, tuning: CompactionSettings): Settings {
+  const reserve = Math.max(maxOutputTokens + PI_OUTPUT_SAFETY, Math.min(tuning.reserveCapTokens, Math.floor(contextWindow * tuning.reserveRatio)));
   return {
     enabled: true,
-    reserveTokens: Math.min(reserve, Math.floor(contextWindow * 0.5)),
-    keepRecentTokens: Math.min(20000, Math.floor(contextWindow * 0.35)),
+    reserveTokens: Math.min(reserve, Math.floor(contextWindow * tuning.reserveMaxRatio)),
+    keepRecentTokens: Math.min(tuning.keepRecentTokens, Math.floor(contextWindow * tuning.keepRecentRatio)),
   };
 }
 
@@ -49,10 +50,10 @@ export function contextTokens(session: SessionManager, fixedTokens: number): num
 
 // 仅使用 Pi 导出的原语：估算、切点、摘要。摘要写入 Pi 会话，调用方用 buildSessionContext 取得新上下文。
 export async function compactIfNeeded(
-  session: SessionManager, model: Model<any>, apiKey: string | undefined, streamFn: StreamFn, fixedTokens: number, signal?: AbortSignal, force = false,
+  session: SessionManager, model: Model<any>, apiKey: string | undefined, streamFn: StreamFn, fixedTokens: number, tuning: CompactionSettings, signal?: AbortSignal, force = false,
 ): Promise<CompactionOutcome | undefined> {
   const contextWindow = model.contextWindow!;
-  const settings = settingsFor(contextWindow, model.maxTokens!);
+  const settings = settingsFor(contextWindow, model.maxTokens!, tuning);
   const tokensBefore = contextTokens(session, fixedTokens);
   if (!force && !shouldCompact(tokensBefore, contextWindow, settings)) return undefined;
 

@@ -154,7 +154,7 @@ ${stateBlock(task, this.wb.profile?.vision)}`,
             if (force) this.wb.active!.forceCompaction = false;
             let outcome: CompactionOutcome | undefined;
             try {
-              outcome = await compactIfNeeded(task.session, request.model, this.wb.apiKey, streamFn, tokensOf(JSON.stringify(leading)) + slotTokens, signal, force);
+              outcome = await compactIfNeeded(task.session, request.model, this.wb.apiKey, streamFn, tokensOf(JSON.stringify(leading)) + slotTokens, this.wb.policy.settings.compaction, signal, force);
             } catch (error) {
               if (signal?.aborted) throw error;
               // 摘要失败不终止 Run：本次请求不压缩照常发送；若因此以 length 停止，由 length 恢复路径处理。

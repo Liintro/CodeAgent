@@ -4,7 +4,6 @@ import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { SessionManager } from '@earendil-works/pi-coding-agent';
 import type { Acceptance, DetectedCommand, DocumentView, PermissionSetting, RootView, UserMode } from '../../shared/contracts/index.js';
-import { DEFAULT_MAX_REPAIRS } from '../../shared/constants.js';
 import { detectCommands } from '../engineering/index.js';
 import type { TaskRecord } from '../runtime/ledger.js';
 import { rebuildTimeline } from '../runtime/timeline.js';
@@ -259,7 +258,7 @@ export class TaskService {
     if (roots.length) roots[0].primary = true;
     const task: TaskState = {
       id: randomUUID(), title: '新任务', createdAt: Date.now(), updatedAt: Date.now(), roots, documents: [], permission: permissionFor('manual'),
-      acceptance: { commands: [], maxRepairs: DEFAULT_MAX_REPAIRS }, delivery: 'none', mutations: new Map(), interrupted: false, loaded: true,
+      acceptance: { commands: [], maxRepairs: this.wb.policy.settings.repair.defaultMaxRepairs }, delivery: 'none', mutations: new Map(), interrupted: false, loaded: true,
       session: undefined as never, timeline: [],
     };
     task.session = this.openSession(task);

@@ -26,7 +26,6 @@ import type {
   WorkbenchEvent,
   WorkbenchSnapshot,
 } from '../../shared/contracts/index.js';
-import { DEFAULT_MAX_REPAIRS } from '../../shared/constants.js';
 import { DocumentLibrary, type DocumentRecord } from '../documents/index.js';
 import { MemoryStore } from '../memory/store.js';
 import { Ledger } from '../runtime/ledger.js';
@@ -239,7 +238,7 @@ export class Workbench {
       error: task?.error ?? this.error,
       mcp: this.mcp.statuses(),
       changes: task?.changes,
-      acceptance: task?.acceptance ?? { commands: [], maxRepairs: DEFAULT_MAX_REPAIRS },
+      acceptance: task?.acceptance ?? { commands: [], maxRepairs: this.policy.settings.repair.defaultMaxRepairs },
       delivery: task?.deliveryView,
       memoryEnabled: this.memoryEnabled,
       webSearch: this.webSearch ? {

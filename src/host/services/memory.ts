@@ -68,7 +68,7 @@ export class MemoryService {
   async recallSlot(task: TaskState, runId: string, point: 'start' | 'repair', query: string, failure?: Failure): Promise<string | undefined> {
     if (!this.wb.memoryEnabled) return undefined;
     try {
-      const recalled = await recall(this.wb.memory, { roots: task.roots.filter(root => !root.missing), query, changedPaths: await this.changedPaths(task), contextWindow: this.wb.profile!.contextWindow, failure });
+      const recalled = await recall(this.wb.memory, { roots: task.roots.filter(root => !root.missing), query, changedPaths: await this.changedPaths(task), contextWindow: this.wb.profile!.contextWindow, failure }, this.wb.policy.settings.recall);
       this.wb.memory.recordUse(recalled.items.map(item => ({ runId, itemId: item.id, point, validity: item.validity, score: item.score, injected: item.injected })));
       if (!recalled.text) return undefined;
       const shown = recalled.items.filter(item => item.injected).map(item => {

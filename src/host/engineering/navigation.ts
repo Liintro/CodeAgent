@@ -7,8 +7,6 @@ import type { RootView } from '../../shared/contracts/index.js';
 // 确定性的代码导航：符号轮廓、定义查找、相关文件（测试/源码配对、引用方、Git 共同修改）。
 // 只读，输出一律带 path:起-止 行号，便于核对引用是否与当前文件一致。
 
-const LIST_LIMIT = 4000;
-const OUTPUT_LIMIT = 16 * 1024;
 
 type Symbol = { name: string; kind: string; line: number; end: number };
 
@@ -91,7 +89,8 @@ export async function repositoryProfile(root: RootView): Promise<string> {
   ].filter(Boolean).join('\n');
 }
 
-export type NavigationContext = { roots: RootView[]; onStarted: (toolCallId: string, root: RootView) => void };
+/** outputChars：单次输出的字符上限；fileLimit：find_symbol 扫描的文件数上限。 */
+export type NavigationContext = { roots: RootView[]; onStarted: (toolCallId: string, root: RootView) => void; outputChars: number; fileLimit: number };
 
 export function createNavigationTools(ctx: NavigationContext): AgentTool<any>[] {
   const rootParam = { type: 'string', enum: ctx.roots.map(root => root.alias), description: '工作目录别名，默认主目录' };
@@ -105,6 +104,7 @@ export function createNavigationTools(ctx: NavigationContext): AgentTool<any>[] 
     if (normalized.startsWith('..') || /^[A-Za-z]:/.test(normalized) || normalized.startsWith('/')) throw new Error('只接受相对工作目录的路径');
     return normalized;
   };
+  const text = (value: string) => ({ content: [{ type: 'text' as const, text: value.length > ctx.outputChars ? `${value.slice(0, ctx.outputChars)}\n（输出已截断）` : value }], details: undefined });
   return [
     {
       name: 'code_outline',
@@ -130,7 +130,7 @@ export function createNavigationTools(ctx: NavigationContext): AgentTool<any>[] 
         const query = String(params.query).toLowerCase();
         const exts = new Set(DEFINITIONS.flatMap(rule => rule.exts));
         const hits: string[] = [];
-        for (const file of (await trackedFiles(root)).filter(file => exts.has(extname(file).toLowerCase())).slice(0, LIST_LIMIT)) {
+        for (const file of (await trackedFiles(root)).filter(file => exts.has(extname(file).toLowerCase())).slice(0, ctx.fileLimit)) {
           const content = await readFile(join(root.path, file), 'utf8').catch(() => '');
           if (!content.toLowerCase().includes(query)) continue;
           for (const item of outline(file, content)) if (item.name.toLowerCase().includes(query)) hits.push(`${file}:${item.line}-${item.end} ${item.kind} ${item.name}`);
@@ -174,8 +174,6 @@ async function coChange(root: RootView, path: string): Promise<[string, number][
   }
   return [...counts].sort((a, b) => b[1] - a[1]).slice(0, 10);
 }
-
-const text = (value: string) => ({ content: [{ type: 'text' as const, text: value.length > OUTPUT_LIMIT ? `${value.slice(0, OUTPUT_LIMIT)}\n（输出已截断）` : value }], details: undefined });
 
 // 引用核对：回答中的 path:起-止 是否指向当前文件中真实存在的行（只核对出处，不判断逻辑是否正确）。
 export async function verifyCitations(answer: string, roots: RootView[]): Promise<{ cited: number; valid: number; invalid: string[] }> {

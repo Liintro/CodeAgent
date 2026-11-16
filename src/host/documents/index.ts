@@ -17,7 +17,6 @@ export const DOCUMENT_KINDS: Record<string, DocumentKind> = {
 // 一个 Run 内最多交给模型的图像数，以及单张图像的大小上限：视觉请求只在文本不够时有针对性地使用。
 export const IMAGE_BUDGET = { perRun: 6, maxBytes: 4 * 1024 * 1024 };
 const MAX_BYTES = 64 * 1024 * 1024;
-const READ_LIMIT = 24 * 1024;
 // 提取格式变化时递增，旧缓存自动失效。
 const CACHE_VERSION = 1;
 
@@ -88,6 +87,8 @@ export type DocumentToolContext = {
   vision: boolean;
   onStarted: (toolCallId: string) => void;
   onChanged: (record: DocumentRecord) => void;
+  /** doc_read 单次输出的字符上限。 */
+  readChars: number;
 };
 
 export function createDocumentTools(ctx: DocumentToolContext): AgentTool<any>[] {
@@ -152,7 +153,7 @@ export function createDocumentTools(ctx: DocumentToolContext): AgentTool<any>[] 
         const { record, extracted, changed } = await openFor(ctx, params.document, toolCallId);
         const body = typeof params.query === 'string' && params.query.trim()
           ? search(record.name, extracted.units, params.query.trim())
-          : read(record.name, select(extracted.units, Array.isArray(params.refs) ? params.refs.map(String) : []), imageHint);
+          : read(record.name, select(extracted.units, Array.isArray(params.refs) ? params.refs.map(String) : []), imageHint, ctx.readChars);
         return text(`${header(record, changed)}\n${body}`);
       },
     },
@@ -201,12 +202,12 @@ function select(units: Unit[], refs: string[]): Unit[] {
   return chosen;
 }
 
-function read(name: string, units: Unit[], imageHint: string): string {
+function read(name: string, units: Unit[], imageHint: string, limit: number): string {
   let output = '';
   for (const unit of units) {
     const body = unit.noTextLayer ? `（没有文本层：扫描页或图片，文本提取为空；${imageHint}）` : unit.text.trimEnd();
     const block = `\n${cite(name, unit)}\n${body}\n`;
-    if (output.length + block.length > READ_LIMIT) return `${output}\n（输出已截断：请用 refs 指定更少的页或章节）`;
+    if (output.length + block.length > limit) return `${output}\n（输出已截断：请用 refs 指定更少的页或章节）`;
     output += block;
   }
   return output;

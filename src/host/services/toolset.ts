@@ -14,6 +14,7 @@ export function buildTools(wb: Workbench, task: TaskState, events: AgentEvents, 
     library: wb.library,
     onStarted: toolCallId => events.markToolRunning(task, toolCallId),
     vision: wb.profile?.vision === true,
+    readChars: wb.policy.settings.output.documentChars,
     onChanged: record => {
       task.documents = task.documents.map(doc => doc.id === record.id ? record : doc);
       wb.ledger.saveDocuments(task.id, task.documents);
@@ -31,13 +32,18 @@ export function buildTools(wb: Workbench, task: TaskState, events: AgentEvents, 
       includeEdit: mode !== 'plan',
       includeShell: mode !== 'plan',
       vision: wb.profile?.vision === true,
-      shellMaxTimeoutSec: wb.policy.params.shellMaxTimeoutSec,
+      shellMaxTimeoutSec: wb.policy.settings.shellMaxTimeoutSec,
       onStarted: (toolCallId, root) => events.markToolRunning(task, toolCallId, root),
       runnerOf: toolCallId => wb.runners.get(toolCallId) ?? 'direct',
     }),
     ...documentTools,
     ...webTools,
-    ...(wb.navigationEnabled ? createNavigationTools({ roots: task.roots, onStarted: (toolCallId, root) => events.markToolRunning(task, toolCallId, root) }) : []),
+    ...(wb.navigationEnabled ? createNavigationTools({
+      roots: task.roots,
+      outputChars: wb.policy.settings.output.navigationChars,
+      fileLimit: wb.policy.settings.output.navigationFiles,
+      onStarted: (toolCallId, root) => events.markToolRunning(task, toolCallId, root),
+    }) : []),
     ...mcpTools.map(tool => ({
       ...tool,
       execute: (toolCallId: string, params: any, signal?: AbortSignal, onUpdate?: any) => {
