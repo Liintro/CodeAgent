@@ -1,11 +1,14 @@
 import { randomUUID } from 'node:crypto';
-import { Agent, type AgentMessage } from '@earendil-works/pi-agent-core';
+import type { AgentMessage } from '@earendil-works/pi-agent-core';
 import { convertToLlm } from '@earendil-works/pi-coding-agent';
 import type { AppError } from '../../shared/contracts/index.js';
 import { CONTINUE_TEXT, IMPLEMENT_PLAN_TEXT, VERIFY_ONLY_TEXT } from '../../shared/constants.js';
 import { repositoryProfile } from '../engineering/navigation.js';
+import { budgetReport } from '../kernel/budget.js';
+import { createAgent, type KernelAgent } from '../kernel/index.js';
 import { injectSlots, reanchorSlots, tokensOf, type Slot } from '../memory/recall.js';
 import type { PermissionGate } from '../policy/permission-gate.js';
+import { classify } from '../tools/permission.js';
 import { compactIfNeeded, type CompactionOutcome } from '../runtime/compaction.js';
 import { repairDanglingToolCalls } from '../runtime/recovery.js';
 import * as delivery from '../workspace/delivery.js';
@@ -116,12 +119,12 @@ export class RunController {
         modelId: profile?.modelId, permission: task.permission, sandboxStatus: this.wb.sandboxStatus(),
         roots: task.roots.map(({ id, alias, path }) => ({ id, alias, path })),
         toolNames: tools.map(tool => tool.name), ruleSources: rules.sources, userTextPreview: text.slice(0, 200),
-        trigger: resumedFrom ? 'recovery' : 'user', ...(resumedFrom ? { resumedFrom } : {}), policyId: this.wb.policy.id,
+        trigger: resumedFrom ? 'recovery' : 'user', ...(resumedFrom ? { resumedFrom } : {}), policyId: this.wb.policy.id, kernel: this.wb.kernel,
       });
       const startTrees = mode !== 'plan' ? await deliveries.snapshotRoots(task, runId, 'run_start') : new Map<string, string>();
       const mutationsAtStart = new Map(task.mutations);
       const first = options.verifyOnly ? undefined : await this.firstPrompt(task, text, resumedFrom);
-      let agent: Agent | undefined;
+      let agent: KernelAgent | undefined;
       // 召回的历史记忆只存在于这个数组里：随每次请求插入到锚点消息之前，从不写入 Pi 会话。
       const slots: Slot[] = [];
       if (first) {
@@ -129,7 +132,10 @@ export class RunController {
         const recalled = await memory.recallSlot(task, runId, 'start', `${task.title} ${text}`);
         if (recalled) slots.push({ anchorTimestamp: anchor.timestamp, anchorText: text, text: recalled });
         const streamFn = model.streamFn(profile!);
-        agent = new Agent({
+        const { parallelReadOnlyTools, maxParallelTools } = this.wb.policy.settings.kernel;
+        const trusted = gate.trustedMcpNames();
+        agent = createAgent(this.wb.kernel, {
+          scheduling: { parallel: parallelReadOnlyTools, maxParallel: maxParallelTools, isReadOnly: name => ['read', 'mcp_trusted'].includes(classify(name, trusted)) },
           initialState: {
             model: model.createModel(profile!),
             messages: task.session.buildSessionContext().messages as AgentMessage[],
@@ -142,7 +148,6 @@ ${stateBlock(task, this.wb.profile?.vision)}`,
           },
           convertToLlm,
           streamFn,
-          toolExecution: 'sequential',
           transformContext: async messages => injectSlots(messages, slots, slotText => userMessage(slotText)),
           beforeToolCall: (context, signal) => gate.beforeToolCall(task, runId, context, signal),
           prepareRequest: async (request, signal) => {
@@ -195,7 +200,7 @@ ${stateBlock(task, this.wb.profile?.vision)}`,
 
   // 提示 -> 验证 -> 修复；预算、无进展、取消、模型错误都会结束循环。
   private async drive(
-    task: TaskState, runId: string, agent: Agent | undefined, first: AgentMessage[] | undefined, options: RunOptions,
+    task: TaskState, runId: string, agent: KernelAgent | undefined, first: AgentMessage[] | undefined, options: RunOptions,
     startTrees: Map<string, string>, mutationsAtStart: Map<string, number>, slots: Slot[],
   ): Promise<RunEnd> {
     const { deliveries, memory, model } = this.services;
@@ -253,6 +258,7 @@ ${stateBlock(task, this.wb.profile?.vision)}`,
       const view = await deliveries.finalizeDelivery(task, runId, trees);
       if (view) await memory.captureMemory(task, runId, view);
     }
+    this.wb.ledger.appendEvent(runId, 'budget.updated', { ...budgetReport(this.wb.ledger.events(runId), Date.now(), this.wb.policy.settings.budget) });
     this.wb.ledger.appendEvent(runId, 'run.ended', { phase, stopReason, error });
     this.wb.ledger.endRun(runId, phase, stopReason, this.wb.profile?.modelId);
     task.run = { ...task.run!, phase };

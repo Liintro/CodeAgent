@@ -56,6 +56,17 @@ const paramsSchema = z.strictObject({
     verificationTailLines: int(20, 2000),
     verificationTailChars: int(1024, 262144),
   }).optional(),
+  kernel: z.strictObject({
+    /** 同一条回复里的只读工具调用并发执行；关闭时全部逐个执行。 */
+    parallelReadOnlyTools: z.boolean().optional(),
+    maxParallelTools: int(1, 16),
+  }).optional(),
+  budget: z.strictObject({
+    /** 每个 Run 的 token、工具调用次数与墙钟时间阈值：超出只记录，不终止。 */
+    maxTokens: int(10_000, 100_000_000),
+    maxToolCalls: int(10, 100_000),
+    maxWallSeconds: int(60, 86_400),
+  }).optional(),
 });
 
 export type PolicyParams = z.infer<typeof paramsSchema>;
@@ -81,11 +92,14 @@ export const DEFAULT_SETTINGS = {
     excerptChars: 600,
   },
   output: { navigationChars: 16 * 1024, navigationFiles: 4000, documentChars: 24 * 1024, verificationTailLines: 200, verificationTailChars: 16 * 1024 },
+  kernel: { parallelReadOnlyTools: true, maxParallelTools: 4 },
+  budget: { maxTokens: 5_000_000, maxToolCalls: 1000, maxWallSeconds: 7200 },
 };
 
 export type PolicySettings = typeof DEFAULT_SETTINGS;
 export type RecallSettings = PolicySettings['recall'];
 export type CompactionSettings = PolicySettings['compaction'];
+export type BudgetSettings = PolicySettings['budget'];
 
 /** 约 1,500 token 的经验手册上限（中文约 1 字符 ≈ 1 token 的保守估计）。 */
 export const PLAYBOOK_MAX_CHARS = 1500;
@@ -123,5 +137,7 @@ function resolve(params: PolicyParams): PolicySettings {
     compaction: { ...d.compaction, ...params.compaction },
     recall: { ...d.recall, ...params.recall, weights: { ...d.recall.weights, ...params.recall?.weights } },
     output: { ...d.output, ...params.output },
+    kernel: { ...d.kernel, ...params.kernel },
+    budget: { ...d.budget, ...params.budget },
   };
 }
