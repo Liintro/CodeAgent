@@ -56,6 +56,11 @@ const paramsSchema = z.strictObject({
     verificationTailLines: int(20, 2000),
     verificationTailChars: int(1024, 262144),
   }).optional(),
+  kernel: z.strictObject({
+    /** 同一条回复里的只读工具调用并发执行；关闭时全部逐个执行。 */
+    parallelReadOnlyTools: z.boolean().optional(),
+    maxParallelTools: int(1, 16),
+  }).optional(),
 });
 
 export type PolicyParams = z.infer<typeof paramsSchema>;
@@ -81,6 +86,7 @@ export const DEFAULT_SETTINGS = {
     excerptChars: 600,
   },
   output: { navigationChars: 16 * 1024, navigationFiles: 4000, documentChars: 24 * 1024, verificationTailLines: 200, verificationTailChars: 16 * 1024 },
+  kernel: { parallelReadOnlyTools: true, maxParallelTools: 4 },
 };
 
 export type PolicySettings = typeof DEFAULT_SETTINGS;
@@ -123,5 +129,6 @@ function resolve(params: PolicyParams): PolicySettings {
     compaction: { ...d.compaction, ...params.compaction },
     recall: { ...d.recall, ...params.recall, weights: { ...d.recall.weights, ...params.recall?.weights } },
     output: { ...d.output, ...params.output },
+    kernel: { ...d.kernel, ...params.kernel },
   };
 }

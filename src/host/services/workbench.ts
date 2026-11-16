@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { Agent, AgentMessage } from '@earendil-works/pi-agent-core';
+import type { AgentMessage } from '@earendil-works/pi-agent-core';
 import type { SessionManager } from '@earendil-works/pi-coding-agent';
 import type {
   Acceptance,
@@ -27,6 +27,7 @@ import type {
   WorkbenchSnapshot,
 } from '../../shared/contracts/index.js';
 import { DocumentLibrary, type DocumentRecord } from '../documents/index.js';
+import { kernelFromEnv, type KernelAgent, type KernelName } from '../kernel/index.js';
 import { MemoryStore } from '../memory/store.js';
 import { Ledger } from '../runtime/ledger.js';
 import { initialPolicy, type HarnessPolicy } from '../runtime/policy.js';
@@ -63,7 +64,7 @@ export type ActiveRun = {
   id: string;
   kind: 'prompt' | 'test';
   taskId?: string;
-  agent?: Agent;
+  agent?: KernelAgent;
   verifyAbort: AbortController;
   cancelRequested: boolean;
   /** 下一次模型请求前无条件压缩一次（length 停止后的恢复）。 */
@@ -90,6 +91,8 @@ export class Workbench {
   webSearch?: WebSearchRuntimeConfig;
   /** Harness 策略包（经验手册 + 白名单参数）；默认策略不改变任何行为。 */
   policy: HarnessPolicy = initialPolicy();
+  /** 使用哪一种循环；启动时由 CODEAGENT_KERNEL 决定。 */
+  readonly kernel: KernelName = kernelFromEnv();
   readonly ledger: Ledger;
   readonly memory: MemoryStore;
   readonly broker = new ApprovalBroker();
