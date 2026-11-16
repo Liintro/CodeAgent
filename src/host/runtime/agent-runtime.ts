@@ -1,82 +1,67 @@
-import { randomUUID } from 'node:crypto';
-import { stat } from 'node:fs/promises';
-import { Agent, type AgentMessage } from '@earendil-works/pi-agent-core';
-import { convertToLlm } from '@earendil-works/pi-coding-agent';
-import {
-  type Acceptance,
-  type AppError,
-  type ApprovalDecision,
-  type ChangesView,
-  type DeliveryActionResult,
-  type DeliveryView,
-  type DetectedCommand,
-  type DiffView,
-  type DocumentView,
-  type MemoryChange,
-  type MemoryItemView,
-  type McpServerDefinition,
-  type ModelInput,
-  type ModelProfile,
-  type PermissionSetting,
-  type RootView,
-  type RunEvent,
-  type SnapshotEnvelope,
-  type UserMode,
-  type VerificationResult,
-  type WorkbenchEvent,
+import type {
+  Acceptance,
+  ApprovalDecision,
+  ChangesView,
+  DeliveryActionResult,
+  DeliveryView,
+  DetectedCommand,
+  DiffView,
+  DocumentView,
+  McpServerDefinition,
+  MemoryChange,
+  MemoryItemView,
+  ModelInput,
+  ModelProfile,
+  PermissionSetting,
+  RootView,
+  RunEvent,
+  SnapshotEnvelope,
+  UserMode,
+  WorkbenchEvent,
 } from '../../shared/contracts/index.js';
-import { CONTINUE_TEXT, IMPLEMENT_PLAN_TEXT, VERIFY_ONLY_TEXT } from '../../shared/constants.js';
-import { injectSlots, reanchorSlots, tokensOf, type Slot } from '../memory/recall.js';
-import { SandboxRunner } from '../tools/sandbox.js';
-import * as delivery from '../workspace/delivery.js';
-import * as git from '../workspace/git.js';
-import { readWorkspaceRules } from '../workspace/workspace.js';
-import { compactIfNeeded, type CompactionOutcome } from './compaction.js';
-import type { HarnessPolicy } from './policy.js';
 import { PermissionGate } from '../policy/permission-gate.js';
 import { AgentEvents } from '../services/agent-events.js';
 import { DeliveryService } from '../services/delivery.js';
 import { MemoryService } from '../services/memory.js';
 import { ModelService } from '../services/model.js';
+import { RunController } from '../services/run-controller.js';
 import { TaskService } from '../services/task-service.js';
-import { buildTools } from '../services/toolset.js';
-import { createError, userMessage, Workbench, type RunEnd, type SandboxOptions, type TaskState } from '../services/workbench.js';
-import { recoveryBrief, repairDanglingToolCalls, unknownCalls, type RootRecovery } from './recovery.js';
-import { repositoryProfile } from '../engineering/navigation.js';
-import { failureHash, feedbackMessage, runVerification } from '../services/verification.js';
-
-type RunOptions = { verifyOnly?: boolean; resumed?: boolean };
-
+import { Workbench, type SandboxOptions } from '../services/workbench.js';
+import type { SandboxRunner } from '../tools/sandbox.js';
+import type { HarnessPolicy } from './policy.js';
 
 export { MODEL_RETRY } from '../services/model.js';
 
+/** Host 对外的运行时接口：组装各个 service，并把每个命令转给负责的 service。 */
 export class AgentRuntime {
   private readonly wb: Workbench;
-  private readonly taskService: TaskService;
-  private readonly memoryService: MemoryService;
-  private readonly deliveryService: DeliveryService;
-  private readonly gate: PermissionGate;
-  private readonly events: AgentEvents;
-  private readonly model: ModelService;
   private readonly sandbox?: SandboxRunner;
+  private readonly tasks: TaskService;
+  private readonly memory: MemoryService;
+  private readonly deliveries: DeliveryService;
+  private readonly gate: PermissionGate;
+  private readonly model: ModelService;
+  private readonly runs: RunController;
 
   // 未提供 dataDir 时（运行时测试）账本与会话都只在内存中。
   constructor(
     hostInstanceId: string,
-    private readonly rulesPath: string,
+    rulesPath: string,
     send: (event: WorkbenchEvent) => void,
     sandbox?: SandboxOptions,
     dataDir?: string,
   ) {
     this.wb = new Workbench(hostInstanceId, send, sandbox, dataDir);
     this.sandbox = this.wb.sandbox;
-    this.taskService = new TaskService(this.wb, task => this.deliveryService.restoreViews(task));
-    this.memoryService = new MemoryService(this.wb);
-    this.deliveryService = new DeliveryService(this.wb, this.taskService, this.memoryService);
-    this.gate = new PermissionGate(this.wb, this.taskService);
-    this.events = new AgentEvents(this.wb);
+    this.tasks = new TaskService(this.wb, task => this.deliveries.restoreViews(task));
+    this.memory = new MemoryService(this.wb);
+    this.deliveries = new DeliveryService(this.wb, this.tasks, this.memory);
+    this.gate = new PermissionGate(this.wb, this.tasks);
     this.model = new ModelService(this.wb);
-    this.taskService.restoreTasks();
+    this.runs = new RunController(this.wb, rulesPath, {
+      tasks: this.tasks, deliveries: this.deliveries, memory: this.memory, gate: this.gate, events: new AgentEvents(this.wb), model: this.model,
+    });
+    this.tasks.restoreTasks();
   }
 
   // 上次异常退出时遗留的授权：新的 Host 不再持有它们，直接撤销。
@@ -85,12 +70,18 @@ export class AgentRuntime {
   }
 
   revalidateRoots(): Promise<void> {
-    return this.taskService.revalidateRoots();
+    return this.tasks.revalidateRoots();
   }
 
   getSnapshot(): SnapshotEnvelope {
     return this.wb.getSnapshot();
   }
+
+  getRunEvents(runId: string): RunEvent[] {
+    return this.wb.ledger.events(runId);
+  }
+
+  // ---- 配置 ----
 
   setModel(profile: ModelInput | undefined, apiKey?: string, models?: ModelProfile[]): ModelProfile | undefined {
     this.wb.assertIdle();
@@ -103,117 +94,13 @@ export class AgentRuntime {
     return profile && { ...profile, hasApiKey: Boolean(apiKey) };
   }
 
-  async setMcpServers(servers: McpServerDefinition[]): Promise<void> {
-    await this.wb.mcp.setServers(servers);
-  }
-
-  newTask(rootPaths: string[] = []): Promise<void> {
-    return this.taskService.newTask(rootPaths);
-  }
-
-  selectTask(taskId: string): void {
-    this.taskService.selectTask(taskId);
-  }
-
-  renameTask(taskId: string, title: string): void {
-    this.taskService.renameTask(taskId, title);
-  }
-
-  deleteTask(taskId: string): Promise<void> {
-    return this.taskService.deleteTask(taskId);
-  }
-
-  addRoot(path: string, grantSandbox = false): Promise<RootView> {
-    return this.taskService.addRoot(path, grantSandbox);
-  }
-
-  removeRoot(rootId: string): Promise<void> {
-    return this.taskService.removeRoot(rootId);
-  }
-
-  addDocument(path: string): Promise<DocumentView> {
-    return this.taskService.addDocument(path);
-  }
-
-  removeDocument(documentId: string): void {
-    this.taskService.removeDocument(documentId);
-  }
-
-  setPrimaryRoot(rootId: string): void {
-    this.taskService.setPrimaryRoot(rootId);
-  }
-
-  setPermission(userMode: UserMode): Promise<PermissionSetting> {
-    return this.taskService.setPermission(userMode);
-  }
-
-  startMessage(text: string): { runId: string } {
-    this.wb.assertConfigured();
-    return this.beginRun(text, {});
-  }
-
-  async implementPlan(): Promise<{ runId: string }> {
-    const task = this.wb.requireTask();
-    if (task.permission.userMode !== 'plan' || !task.timeline.some(item => item.kind === 'message' && item.role === 'assistant')) {
-      throw new Error('当前没有可实施的计划');
-    }
-    await this.taskService.setPermission('accept_edits');
-    return this.startMessage(IMPLEMENT_PLAN_TEXT);
-  }
-
-  continueTask(): { runId: string } {
-    this.wb.assertConfigured();
-    if (!this.wb.requireTask().interrupted) throw new Error('当前任务没有被中断的执行');
-    return this.beginRun(CONTINUE_TEXT, {});
-  }
-
-  verifyNow(): { runId: string } {
-    const task = this.wb.requireTask();
-    if (task.permission.userMode === 'plan') throw new Error('计划模式不执行验证命令');
-    if (!task.acceptance.commands.length) throw new Error('请先确认验收命令');
-    return this.beginRun(VERIFY_ONLY_TEXT, { verifyOnly: true });
-  }
-
-  detectAcceptance(): Promise<DetectedCommand[]> {
-    return this.taskService.detectAcceptance();
-  }
-
-  setAcceptance(acceptance: Acceptance): void {
-    this.taskService.setAcceptance(acceptance);
-  }
-
   testModel(): Promise<{ text: string }> {
     return this.model.testModel();
   }
 
-  cancelRun(runId: string): void {
-    if (!this.wb.active || this.wb.active.id !== runId) throw new Error('当前执行已结束');
-    this.wb.active.cancelRequested = true;
-    const task = this.wb.taskOf(this.wb.active);
-    if (task?.run) task.run = { ...task.run, phase: 'cancelling' };
-    else if (this.wb.testRun) this.wb.testRun = { ...this.wb.testRun, phase: 'cancelling' };
-    this.wb.emitRun(task);
-    this.wb.active.agent?.abort();
-    this.wb.active.verifyAbort.abort();
+  async setMcpServers(servers: McpServerDefinition[]): Promise<void> {
+    await this.wb.mcp.setServers(servers);
   }
-
-  decideApproval(approvalId: string, decision: ApprovalDecision): void {
-    this.gate.decideApproval(approvalId, decision);
-  }
-
-  getChanges(): Promise<ChangesView> {
-    return this.deliveryService.getChanges();
-  }
-
-  getDiff(rootId: string, path: string): Promise<DiffView> {
-    return this.deliveryService.getDiff(rootId, path);
-  }
-
-  getRunEvents(runId: string): RunEvent[] {
-    return this.wb.ledger.events(runId);
-  }
-
-  // ---- 记忆管理 ----
 
   setPolicy(policy: HarnessPolicy): void {
     this.wb.assertIdle();
@@ -226,7 +113,7 @@ export class AgentRuntime {
   }
 
   setMemoryEnabled(enabled: boolean): void {
-    this.memoryService.setEnabled(enabled);
+    this.memory.setEnabled(enabled);
   }
 
   // 开启需要完整配置；关闭或缺少接口地址时一律回到未配置状态（工具不存在）。
@@ -241,40 +128,126 @@ export class AgentRuntime {
     this.wb.emitSnapshot();
   }
 
+  // ---- 任务 ----
+
+  newTask(rootPaths: string[] = []): Promise<void> {
+    return this.tasks.newTask(rootPaths);
+  }
+
+  selectTask(taskId: string): void {
+    this.tasks.selectTask(taskId);
+  }
+
+  renameTask(taskId: string, title: string): void {
+    this.tasks.renameTask(taskId, title);
+  }
+
+  deleteTask(taskId: string): Promise<void> {
+    return this.tasks.deleteTask(taskId);
+  }
+
+  addRoot(path: string, grantSandbox = false): Promise<RootView> {
+    return this.tasks.addRoot(path, grantSandbox);
+  }
+
+  removeRoot(rootId: string): Promise<void> {
+    return this.tasks.removeRoot(rootId);
+  }
+
+  addDocument(path: string): Promise<DocumentView> {
+    return this.tasks.addDocument(path);
+  }
+
+  removeDocument(documentId: string): void {
+    this.tasks.removeDocument(documentId);
+  }
+
+  setPrimaryRoot(rootId: string): void {
+    this.tasks.setPrimaryRoot(rootId);
+  }
+
+  setPermission(userMode: UserMode): Promise<PermissionSetting> {
+    return this.tasks.setPermission(userMode);
+  }
+
+  detectAcceptance(): Promise<DetectedCommand[]> {
+    return this.tasks.detectAcceptance();
+  }
+
+  setAcceptance(acceptance: Acceptance): void {
+    this.tasks.setAcceptance(acceptance);
+  }
+
+  // ---- Run ----
+
+  startMessage(text: string): { runId: string } {
+    return this.runs.startMessage(text);
+  }
+
+  implementPlan(): Promise<{ runId: string }> {
+    return this.runs.implementPlan();
+  }
+
+  continueTask(): { runId: string } {
+    return this.runs.continueTask();
+  }
+
+  verifyNow(): { runId: string } {
+    return this.runs.verifyNow();
+  }
+
+  cancelRun(runId: string): void {
+    this.runs.cancelRun(runId);
+  }
+
+  decideApproval(approvalId: string, decision: ApprovalDecision): void {
+    this.gate.decideApproval(approvalId, decision);
+  }
+
+  // ---- 记忆 ----
+
   listMemory(): Promise<MemoryItemView[]> {
-    return this.memoryService.listMemory();
+    return this.memory.listMemory();
   }
 
   changeMemory(change: MemoryChange): void {
-    this.memoryService.changeMemory(change);
+    this.memory.changeMemory(change);
   }
 
   addMemoryNote(text: string): Promise<void> {
-    return this.memoryService.addMemoryNote(text);
+    return this.memory.addMemoryNote(text);
   }
 
-  // ---- 交付：报告与用户动作 ----
+  // ---- 变更与交付 ----
+
+  getChanges(): Promise<ChangesView> {
+    return this.deliveries.getChanges();
+  }
+
+  getDiff(rootId: string, path: string): Promise<DiffView> {
+    return this.deliveries.getDiff(rootId, path);
+  }
 
   getDelivery(): Promise<DeliveryView> {
-    return this.deliveryService.getDelivery();
+    return this.deliveries.getDelivery();
   }
 
   acceptRoot(rootId: string): Promise<void> {
-    return this.deliveryService.acceptRoot(rootId);
+    return this.deliveries.acceptRoot(rootId);
   }
 
   restoreRoot(rootId: string): Promise<DeliveryActionResult> {
-    return this.deliveryService.restoreRoot(rootId);
+    return this.deliveries.restoreRoot(rootId);
   }
 
   commitRoot(rootId: string, message: string, confirmShared: boolean): Promise<DeliveryActionResult> {
-    return this.deliveryService.commitRoot(rootId, message, confirmShared);
+    return this.deliveries.commitRoot(rootId, message, confirmShared);
   }
 
   async shutdown(): Promise<void> {
     const active = this.wb.active;
     if (active) {
-      this.cancelRun(active.id);
+      this.runs.cancelRun(active.id);
       await active.done;
     }
     await this.wb.mcp.closeAll();
@@ -282,281 +255,4 @@ export class AgentRuntime {
     for (const path of granted) await this.sandbox?.revoke(path).catch(() => undefined);
     this.wb.ledger.close();
   }
-
-  // ---- Run ----
-
-  private beginRun(text: string, options: RunOptions): { runId: string } {
-    this.wb.assertIdle();
-    const task = this.taskService.ensureTask();
-    this.taskService.load(task);
-    const resumed = task.interrupted && !options.verifyOnly ? this.wb.ledger.lastRun(task.id) : undefined;
-    const run = this.wb.ledger.startRun(task.id, resumed ? 'recovery' : 'user', resumed?.id);
-    this.wb.testRun = undefined;
-    this.wb.error = undefined;
-    task.error = undefined;
-    task.interrupted = false;
-    task.run = { id: run.id, taskId: task.id, phase: 'running', toolErrors: false };
-    this.wb.active = { id: run.id, kind: 'prompt', taskId: task.id, cancelRequested: false, verifyAbort: new AbortController() };
-    if (options.verifyOnly) {
-      task.timeline.push({ kind: 'notice', id: randomUUID(), text: VERIFY_ONLY_TEXT });
-    } else {
-      if (!task.timeline.length) task.title = text.replace(/\s+/g, ' ').slice(0, 32);
-      this.wb.pushMessage(task, { text });
-    }
-    this.taskService.save(task);
-    this.wb.emitRun(task);
-    this.wb.emitSnapshot();
-    this.wb.active.done = this.runPrompt(task, run.id, text, { ...options, resumed: Boolean(resumed) }, resumed?.id);
-    return { runId: run.id };
-  }
-
-  private async runPrompt(task: TaskState, runId: string, text: string, options: RunOptions, resumedFrom?: string): Promise<void> {
-    let unsubscribe: (() => void) | undefined;
-    try {
-      const profile = this.wb.profile;
-      const mode = task.permission.userMode;
-      await this.taskService.assertRootsExist(task);
-      const rules = await readWorkspaceRules(task.roots, this.rulesPath);
-      await this.taskService.refreshRoots(task);
-      task.profile = this.wb.navigationEnabled ? (await Promise.all(task.roots.map(root => repositoryProfile(root).catch(() => '')))).filter(Boolean).join('\n') : undefined;
-      const tools = buildTools(this.wb, task, this.events, this.gate.trustedMcpNames());
-      this.wb.ledger.appendEvent(runId, 'run.started', {
-        modelId: profile?.modelId, permission: task.permission, sandboxStatus: this.wb.sandboxStatus(),
-        roots: task.roots.map(({ id, alias, path }) => ({ id, alias, path })),
-        toolNames: tools.map(tool => tool.name), ruleSources: rules.sources, userTextPreview: text.slice(0, 200),
-        trigger: resumedFrom ? 'recovery' : 'user', ...(resumedFrom ? { resumedFrom } : {}), policyId: this.wb.policy.id,
-      });
-      const startTrees = mode !== 'plan' ? await this.deliveryService.snapshotRoots(task, runId, 'run_start') : new Map<string, string>();
-      const mutationsAtStart = new Map(task.mutations);
-      const first = options.verifyOnly ? undefined : await this.firstPrompt(task, text, resumedFrom);
-      let agent: Agent | undefined;
-      // 召回的历史记忆只存在于这个数组里：随每次请求插入到锚点消息之前，从不写入 Pi 会话。
-      const slots: Slot[] = [];
-      if (first) {
-        const anchor = first.at(-1) as Extract<AgentMessage, { role: 'user' }>;
-        const recalled = await this.memoryService.recallSlot(task, runId, 'start', `${task.title} ${text}`);
-        if (recalled) slots.push({ anchorTimestamp: anchor.timestamp, anchorText: text, text: recalled });
-        const streamFn = this.model.streamFn(profile!);
-        agent = new Agent({
-          initialState: {
-            model: this.model.createModel(profile!),
-            messages: task.session.buildSessionContext().messages as AgentMessage[],
-            systemPrompt: `${rules.text}
-
-${this.modeStatement(task)}
-
-${this.stateBlock(task)}`,
-            tools,
-          },
-          convertToLlm,
-          streamFn,
-          toolExecution: 'sequential',
-          transformContext: async messages => injectSlots(messages, slots, slotText => userMessage(slotText)),
-          beforeToolCall: (context, signal) => this.gate.beforeToolCall(task, runId, context, signal),
-          prepareRequest: async (request, signal) => {
-            // 系统提示是对话记录开头的 system 消息，不在会话里；压缩后需要原样放回。
-            const leading = request.context.messages.filter(message => message.role === 'system');
-            const slotTokens = slots.reduce((sum, slot) => sum + tokensOf(slot.text), 0);
-            // system 消息除正文外还带 sections 与工具定义，按整条消息的 JSON 计数。
-            const force = this.wb.active?.id === runId && this.wb.active.forceCompaction === true;
-            if (force) this.wb.active!.forceCompaction = false;
-            let outcome: CompactionOutcome | undefined;
-            try {
-              outcome = await compactIfNeeded(task.session, request.model, this.wb.apiKey, streamFn, tokensOf(JSON.stringify(leading)) + slotTokens, signal, force);
-            } catch (error) {
-              if (signal?.aborted) throw error;
-              // 摘要失败不终止 Run：本次请求不压缩照常发送；若因此以 length 停止，由 length 恢复路径处理。
-              this.recordCompactionFailure(task, runId, error);
-              return undefined;
-            }
-            if (!outcome) return undefined;
-            this.recordCompaction(task, runId, outcome);
-            const kept = task.session.buildSessionContext().messages as AgentMessage[];
-            reanchorSlots(slots, kept);
-            return { context: { ...request.context, messages: [...leading, ...kept] } };
-          },
-        });
-        if (this.wb.active?.id === runId) this.wb.active.agent = agent;
-        unsubscribe = agent.subscribe(event => this.events.onAgentEvent(task, runId, event));
-      }
-      const end = await this.drive(task, runId, agent, first, options, startTrees, mutationsAtStart, slots);
-      await this.endRun(task, runId, end.phase, end.stopReason, end.error);
-    } catch (error) {
-      if (this.wb.active?.cancelRequested) await this.endRun(task, runId, 'cancelled', 'cancelled');
-      else if ((error as { appCode?: string }).appCode === 'ROOT_MISSING') await this.endRun(task, runId, 'failed', 'agent_error', { code: 'ROOT_MISSING', message: (error as Error).message });
-      else await this.endRun(task, runId, 'failed', 'agent_error', createError('RUN_FAILED', '执行失败', error, this.wb.apiKey));
-    } finally {
-      unsubscribe?.();
-      if (this.wb.active?.id === runId) this.wb.active = undefined;
-    }
-  }
-
-  // 中断过的 Task 先核对真实状态，并把恢复说明作为单独的标注消息放在用户消息之前。
-  private async firstPrompt(task: TaskState, text: string, resumedFrom?: string): Promise<AgentMessage[]> {
-    const user = userMessage(text);
-    if (!resumedFrom) return [user];
-    repairDanglingToolCalls(task.session);
-    const brief = await this.buildRecoveryBrief(task, resumedFrom);
-    this.wb.pushMessage(task, { text: brief, harness: true, beforeLast: true });
-    return [userMessage(brief), user];
-  }
-
-  // 提示 -> 验证 -> 修复；预算、无进展、取消、模型错误都会结束循环。
-  private async drive(
-    task: TaskState, runId: string, agent: Agent | undefined, first: AgentMessage[] | undefined, options: RunOptions,
-    startTrees: Map<string, string>, mutationsAtStart: Map<string, number>, slots: Slot[],
-  ): Promise<RunEnd> {
-    let input = first;
-    let previous: { hash: string; fingerprint: string } | undefined;
-    for (let attempt = 0; ; attempt++) {
-      if (input) {
-        const ended = await this.model.promptWithRecovery(task, runId, agent!, input);
-        if (ended) return ended;
-      }
-      if (task.permission.userMode === 'plan') return { phase: 'finished', stopReason: 'passed' };
-      const view = await this.deliveryService.refreshDelivery(task);
-      const startOf = (rootId: string, git: boolean, now?: string) => startTrees.get(rootId) ?? (git ? now : delivery.treeOfPlainRoot(mutationsAtStart.get(rootId) ?? 0));
-      // 恢复的 Run 要接着验证：中断前的修改还没有来得及验证。
-      const changed = options.verifyOnly || options.resumed || view.roots.some(root => root.finalTree !== startOf(root.rootId, root.git, root.finalTree));
-      const pending = view.roots.filter(root => (root.state === 'unverified' || root.state === 'verification_failed') && this.wb.commandsOf(task, root.rootId).length);
-      if (!changed || !pending.length) return { phase: 'finished', stopReason: changed && view.state === 'unverified' ? 'unverified' : 'passed' };
-
-      const results = await runVerification(this.wb, task, runId, attempt, pending.map(root => ({ root: task.roots.find(item => item.id === root.rootId)!, tree: root.finalTree! })));
-      const failed = results.find(result => result.status !== 'passed');
-      if (!failed) {
-        const after = await this.deliveryService.refreshDelivery(task);
-        return { phase: 'finished', stopReason: after.state === 'verified' ? 'passed' : 'unverified' };
-      }
-      if (failed.status === 'cancelled') return { phase: 'cancelled', stopReason: 'cancelled' };
-      if (failed.status === 'unavailable') return { phase: 'finished', stopReason: 'verification_unavailable', error: { code: 'VERIFY_UNAVAILABLE', message: '验证命令未能执行', detail: failed.outputTail } };
-      if (options.verifyOnly) return { phase: 'finished', stopReason: 'verification_failed' };
-      if (attempt >= task.acceptance.maxRepairs) return { phase: 'finished', stopReason: 'budget_exhausted' };
-
-      const fingerprint = view.roots.map(root => `${root.rootId}:${root.finalTree}`).join('|');
-      const hash = failureHash(failed);
-      if (previous?.hash === hash && previous.fingerprint === fingerprint) return { phase: 'finished', stopReason: 'no_progress' };
-      previous = { hash, fingerprint };
-
-      const alias = task.roots.find(root => root.id === failed.rootId)?.alias ?? failed.rootId;
-      const feedback = feedbackMessage(failed, alias, attempt + 1, task.acceptance.maxRepairs);
-      this.wb.ledger.appendEvent(runId, 'repair.requested', { attempt: attempt + 1, reason: failed.status, commandId: failed.commandId });
-      this.wb.setPhase(task, 'running', attempt + 1);
-      this.wb.pushMessage(task, { text: feedback, harness: true });
-      const message = userMessage(feedback);
-      const recalled = await this.memoryService.recallSlot(task, runId, 'repair', task.title, { hash, outputTail: failed.outputTail });
-      if (recalled) slots.push({ anchorTimestamp: message.timestamp, anchorText: feedback, text: recalled });
-      input = [message];
-    }
-  }
-
-  private async endRun(task: TaskState, runId: string, phase: RunEnd['phase'], stopReason: string, error?: AppError): Promise<void> {
-    if (!this.wb.ledger.events(runId).some(event => event.type === 'run.started')) {
-      this.wb.ledger.appendEvent(runId, 'run.started', { permission: task.permission, roots: task.roots.map(({ id, alias, path }) => ({ id, alias, path })), trigger: 'user' });
-    }
-    if (task.permission.userMode !== 'plan') {
-      const trees = await this.deliveryService.snapshotRoots(task, runId, 'run_end');
-      await this.deliveryService.refreshChanges(task, trees);
-      const view = await this.deliveryService.finalizeDelivery(task, runId, trees);
-      if (view) await this.memoryService.captureMemory(task, runId, view);
-    }
-    this.wb.ledger.appendEvent(runId, 'run.ended', { phase, stopReason, error });
-    this.wb.ledger.endRun(runId, phase, stopReason, this.wb.profile?.modelId);
-    task.run = { ...task.run!, phase };
-    if (error) {
-      task.error = error;
-      this.wb.emit({ type: 'error', value: error });
-    }
-    this.taskService.save(task);
-    this.wb.emitRun(task);
-    this.wb.emitSnapshot();
-  }
-
-  // ---- 记忆召回 ----
-
-  // ---- Compaction ----
-
-  private recordCompaction(task: TaskState, runId: string, outcome: CompactionOutcome): void {
-    const usage = outcome.usage as { totalTokens?: number } | undefined;
-    this.wb.ledger.appendEvent(runId, 'compaction.done', { tokensBefore: outcome.tokensBefore, tokensAfter: outcome.tokensAfter, firstKeptEntryId: outcome.firstKeptEntryId, usage });
-    if (usage?.totalTokens) this.wb.ledger.appendEvent(runId, 'model.usage', { ...usage, purpose: 'compaction' });
-    task.timeline.push({ kind: 'notice', id: randomUUID(), text: '较早的对话已压缩为摘要' });
-    this.wb.emitSnapshot();
-  }
-
-  private recordCompactionFailure(task: TaskState, runId: string, error: unknown): void {
-    this.wb.ledger.appendEvent(runId, 'compaction.failed', { error: createError('COMPACTION_FAILED', '上下文压缩失败', error, this.wb.apiKey) });
-    task.timeline.push({ kind: 'notice', id: randomUUID(), text: '上下文压缩失败，本次请求不压缩继续' });
-    this.wb.emitSnapshot();
-  }
-
-  // 每个 Run 的系统提示末尾的状态块：压缩无法丢弃这些事实。
-  private stateBlock(task: TaskState): string {
-    const lines = ['## 任务状态（由系统生成）'];
-    if (task.profile) lines.push(task.profile);
-    const commands = task.acceptance.commands.map(command => `- ${task.roots.find(root => root.id === command.rootId)?.alias ?? command.rootId}：${command.command}`);
-    lines.push(commands.length ? `验收命令（用户已确认，不得修改）：\n${commands.join('\n')}` : '验收命令：未设置');
-    if (task.documents.length) {
-      lines.push(`任务文档（只读；用 doc_outline 查看结构、doc_read 读取页或章节；实现与回答时按 【文档 p.N】 或 【文档 §章节】 引用依据${this.wb.profile?.vision ? '；文本不足以确定的图、表、扫描页才用 doc_view 查看图像' : '；当前模型不支持图像输入，图片与扫描页的内容无法解读，遇到时如实说明'}）：`);
-      for (const doc of task.documents) lines.push(`- ${doc.name}（${doc.kind}，${doc.kind === 'pdf' ? `${doc.pages} 页` : `${doc.sections} 个章节`}${doc.noTextLayerPages.length ? `，第 ${doc.noTextLayerPages.join('、')} 页没有文本层` : ''}）`);
-    }
-    for (const entry of task.deliveryView?.roots ?? []) {
-      const last = entry.verification.map(result => `${result.label}${result.status === 'passed' ? '通过' : `未通过（退出码 ${result.exitCode ?? '无'}）`}`).join('、');
-      lines.push(`目录 ${entry.alias}：交付状态 ${entry.state}${last ? `；当前代码上的验证：${last}` : ''}`);
-      if (entry.files.length) lines.push(`  自任务起点以来变更的文件：${entry.files.slice(0, 50).map(file => `${file.status} ${file.path}`).join('；')}${entry.files.length > 50 ? ` 等共 ${entry.files.length} 个` : ''}`);
-    }
-    return lines.join('\n');
-  }
-
-  // ---- Roots, Git, delivery and sandbox ----
-
-  // ---- Recovery ----
-
-  // 以真实的 Git/工作区状态为准，列出变更与结果未知的调用；不重放任何东西。
-  private async buildRecoveryBrief(task: TaskState, interruptedRunId: string): Promise<string> {
-    const events = this.wb.ledger.events(interruptedRunId);
-    const roots: RootRecovery[] = [];
-    for (const root of task.roots) {
-      const exists = await stat(root.path).then(value => value.isDirectory(), () => false);
-      if (!exists || !root.git) {
-        roots.push({ alias: root.alias, sinceRun: [], sinceBaseline: [], missing: !exists });
-        continue;
-      }
-      const now = await git.snapshot(root.path);
-      const start = events.find(event => event.type === 'git.snapshot' && event.data.kind === 'run_start' && event.data.rootId === root.id)?.data.tree as string | undefined;
-      const base = this.deliveryService.baselineOf(task, root.id)?.tree;
-      roots.push({
-        alias: root.alias,
-        sinceRun: start ? await git.changes(root.path, start, now) : [],
-        sinceBaseline: base ? await git.changes(root.path, base, now) : [],
-      });
-    }
-    const calls = unknownCalls(events, rootId => task.roots.find(root => root.id === rootId)?.alias);
-    const last = this.wb.ledger.taskEvents(task.id, 'verification.finished').at(-1)?.data as unknown as VerificationResult | undefined;
-    const lastText = last ? `${task.roots.find(root => root.id === last.rootId)?.alias ?? last.rootId} ${last.label}：${last.status === 'passed' ? '通过' : `未通过（退出码 ${last.exitCode ?? '无'}）`}` : undefined;
-    return recoveryBrief(roots, calls, lastText);
-  }
-
-  // ---- 持久化与状态 ----
-
-  private modeStatement(task: TaskState): string {
-    const roots = task.roots.map(root => `- ${root.alias}${root.primary ? '（主目录）' : ''}：${root.path}${root.git ? `，Git 分支 ${root.git.branch ?? '未知'}` : '，非 Git'}`).join('\n');
-    const mode = { plan: '计划：只读，仅可读取与搜索，不要修改任何文件，给出分步实施计划', manual: '手动：编辑与命令均需用户批准', accept_edits: '接受编辑：范围内文件编辑自动通过，命令需批准', auto: '自动：编辑自动通过，命令仅在沙箱内自动执行', bypass: '绕过权限：不再逐项询问' }[task.permission.userMode];
-    return `你是 CodeAgent 中文工作台中的编程助手。只使用显式提供的工具，所有文件路径必须位于下列目录内；工具可用 root 参数选择目录，默认主目录。根据真实工具结果回答，不要声称未执行的验证已经通过。
-工作目录：
-${roots || '（未选择目录）'}
-当前权限模式：${mode}
-
-## 工程守则（必须遵守）
-1. 范围纪律：只在上述工作目录内探索与取证。不要读取、扫描或修改目录之外的文件系统、缓存目录或其他会话/运行留下的数据；需要工具链信息时用 Get-Command 或 where.exe 查询，不要全盘递归搜索。
-2. 测试契约：测试是行为契约，测试失败首先当作源码问题对待。不要为了让测试通过而修改或删除已有测试、放宽断言或改写期望值；除非任务明确要求，交付的改动不包含对任何测试文件的改动（也不要新增测试文件）。
-3. 沿用惯例：新增或修改报错与日志文本、命令行参数、配置项、函数或接口名时，先在仓库里搜索同类写法（相同或相近的消息、相邻的参数定义、同模块的命名），措辞、大小写和格式与已有写法保持一致；已有现成的消息或工具函数时直接复用，不要另起一套。
-4. 验证闭环：修改完成后，先从仓库的构建配置（package.json、Makefile、Cargo.toml、go.mod、pom.xml、CMakeLists.txt 等）识别真实的构建/测试入口，运行与本次改动最相关的最小子集。因环境原因（依赖缺失、权限拒绝、工具链不可用）无法运行时，同一目标最多尝试 2 次即降级为替代验证：复核改动上下文、用 git diff 自查、或在系统临时目录自建最小验证脚本（验证后删除，不留在工作区）。
-5. 成本纪律：命令设置合理超时（常用 30–300 秒），不要让长命令阻塞整个任务；同一命令失败后不要原样重跑；探索阶段用复合命令一次获取多项信息，避免对同一文件反复读取。
-6. 交付自查：结束前用 git status/diff 核对改动范围，确认没有混入临时文件、调试脚本或无关产物。最终回复如实说明：做了什么、哪些验证已通过、哪些验证无法执行及原因；验证不完整的部分不得声称完成。${this.wb.policy.playbook ? `
-
-## 经验手册（从历史任务轨迹总结）
-${this.wb.policy.playbook}` : ''}`;
-  }
-
 }
-
