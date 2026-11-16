@@ -3,7 +3,7 @@ import { basename } from 'node:path';
 import { CONTINUE_TEXT, IMPLEMENT_PLAN_TEXT, VERIFY_ONLY_TEXT } from '../../shared/constants.js';
 import type { Acceptance, DeliveryView, RootDelivery, RootView, VerificationResult } from '../../shared/contracts/index.js';
 import type { Ledger } from '../runtime/ledger.js';
-import { failureHash } from '../runtime/verification.js';
+import { failureHash } from '../services/verification.js';
 import * as git from '../workspace/git.js';
 import { repoOf, type RepoRef } from './repo.js';
 import type { Anchor, MemoryStore, NewMemory } from './store.js';

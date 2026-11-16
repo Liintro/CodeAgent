@@ -1,10 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { stat } from 'node:fs/promises';
-import { join } from 'node:path';
 import { Agent, type AgentEvent, type AgentMessage, type BeforeToolCallContext, type StreamFn } from '@earendil-works/pi-agent-core';
 import { streamSimple } from '@earendil-works/pi-ai/api/openai-completions';
 import type { Model } from '@earendil-works/pi-ai';
-import { convertToLlm, createLocalPowerShellOperations, SessionManager } from '@earendil-works/pi-coding-agent';
+import { convertToLlm, SessionManager } from '@earendil-works/pi-coding-agent';
 import {
   type Acceptance,
   type AppError,
@@ -50,7 +49,7 @@ import { TaskService } from '../services/task-service.js';
 import { createError, userMessage, Workbench, type RunEnd, type SandboxOptions, type TaskState } from '../services/workbench.js';
 import { recoveryBrief, repairDanglingToolCalls, unknownCalls, type RootRecovery } from './recovery.js';
 import { createNavigationTools, repositoryProfile } from '../engineering/navigation.js';
-import { failureHash, feedbackMessage, verifyRoots } from './verification.js';
+import { failureHash, feedbackMessage, runVerification } from '../services/verification.js';
 
 type PromptEnd = RunEnd & { retry?: 'transient' | 'length' };
 type RunOptions = { verifyOnly?: boolean; resumed?: boolean };
@@ -439,7 +438,7 @@ ${this.stateBlock(task)}`,
       const pending = view.roots.filter(root => (root.state === 'unverified' || root.state === 'verification_failed') && this.wb.commandsOf(task, root.rootId).length);
       if (!changed || !pending.length) return { phase: 'finished', stopReason: changed && view.state === 'unverified' ? 'unverified' : 'passed' };
 
-      const results = await this.verify(task, runId, attempt, pending.map(root => ({ root: task.roots.find(item => item.id === root.rootId)!, tree: root.finalTree! })));
+      const results = await runVerification(this.wb, task, runId, attempt, pending.map(root => ({ root: task.roots.find(item => item.id === root.rootId)!, tree: root.finalTree! })));
       const failed = results.find(result => result.status !== 'passed');
       if (!failed) {
         const after = await this.deliveryService.refreshDelivery(task);
@@ -529,36 +528,6 @@ ${this.stateBlock(task)}`,
     }
     if (stopReason === 'length') return { phase: 'failed', stopReason: 'agent_error', error: createError('OUTPUT_LENGTH_LIMIT', '已达到输出长度限制', undefined, this.wb.apiKey), retry: 'length' };
     return undefined;
-  }
-
-  // 与交互式 Shell 使用同一种运行方式：Auto 只用已验证的沙箱，沙箱失败绝不改用直接运行。
-  private async verify(task: TaskState, runId: string, attempt: number, targets: { root: RootView; tree: string }[]): Promise<VerificationResult[]> {
-    const mode = task.permission.userMode;
-    const sandboxed = mode !== 'bypass' && this.wb.sandboxReady(task);
-    const exec = sandboxed
-      ? this.wb.sandbox!.operations().exec
-      : mode === 'auto'
-        ? async () => { throw new Error('Auto 模式需要已验证且已授权的沙箱，验证命令未执行'); }
-        : (this.wb.sandbox?.directOperations() ?? createLocalPowerShellOperations()).exec;
-    this.wb.setPhase(task, 'verifying', attempt);
-    const itemId = (commandId: string) => `${runId}-${attempt}-${commandId}`;
-    return verifyRoots(
-      {
-        evidenceDir: join(this.wb.evidenceRoot(), task.id, runId), attempt, exec, sandboxed, signal: this.wb.active?.verifyAbort.signal,
-        onStart: (command, root) => {
-          this.wb.ledger.appendEvent(runId, 'verification.started', { attempt, commandId: command.id, label: command.label, command: command.command, rootId: root.id, runnerKind: sandboxed ? 'sandbox' : 'direct' });
-          this.wb.upsertVerification(task, { kind: 'verification', id: itemId(command.id), attempt, rootAlias: root.alias, commandLabel: command.label, command: command.command, state: 'running', outputTail: '' });
-        },
-        onFinish: (result, root) => {
-          this.wb.ledger.appendEvent(runId, 'verification.finished', { ...result });
-          this.wb.upsertVerification(task, {
-            kind: 'verification', id: itemId(result.commandId), attempt, rootAlias: root.alias, commandLabel: result.label, command: result.command,
-            state: result.status, exitCode: result.exitCode, durationMs: result.durationMs, outputTail: result.outputTail, logFile: result.logFile, failure: result.failure,
-          });
-        },
-      },
-      targets.map(({ root, tree }) => ({ root, tree, commands: this.wb.commandsOf(task, root.id) })),
-    );
   }
 
   private async endRun(task: TaskState, runId: string, phase: RunEnd['phase'], stopReason: string, error?: AppError): Promise<void> {

@@ -2,10 +2,11 @@ import { createHash } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
-import type { PowerShellOperations } from '@earendil-works/pi-coding-agent';
+import { createLocalPowerShellOperations, type PowerShellOperations } from '@earendil-works/pi-coding-agent';
 import { FEEDBACK_PREFIX } from '../../shared/constants.js';
 import type { ParsedFailure, RootView, VerificationResult, VerifyCommand } from '../../shared/contracts/index.js';
 import { parseFailure, sandboxBlocked } from '../engineering/index.js';
+import type { TaskState, Workbench } from './workbench.js';
 
 type Exec = PowerShellOperations['exec'];
 
@@ -22,6 +23,36 @@ export type VerifyContext = {
   onStart: (command: VerifyCommand, root: RootView) => void;
   onFinish: (result: VerificationResult, root: RootView) => void;
 };
+
+// 与交互式 Shell 使用同一种运行方式：Auto 只用已验证的沙箱，沙箱失败绝不改用直接运行。
+export async function runVerification(wb: Workbench, task: TaskState, runId: string, attempt: number, targets: { root: RootView; tree: string }[]): Promise<VerificationResult[]> {
+  const mode = task.permission.userMode;
+  const sandboxed = mode !== 'bypass' && wb.sandboxReady(task);
+  const exec = sandboxed
+    ? wb.sandbox!.operations().exec
+    : mode === 'auto'
+      ? async () => { throw new Error('Auto 模式需要已验证且已授权的沙箱，验证命令未执行'); }
+      : (wb.sandbox?.directOperations() ?? createLocalPowerShellOperations()).exec;
+  wb.setPhase(task, 'verifying', attempt);
+  const itemId = (commandId: string) => `${runId}-${attempt}-${commandId}`;
+  return verifyRoots(
+    {
+      evidenceDir: join(wb.evidenceRoot(), task.id, runId), attempt, exec, sandboxed, signal: wb.active?.verifyAbort.signal,
+      onStart: (command, root) => {
+        wb.ledger.appendEvent(runId, 'verification.started', { attempt, commandId: command.id, label: command.label, command: command.command, rootId: root.id, runnerKind: sandboxed ? 'sandbox' : 'direct' });
+        wb.upsertVerification(task, { kind: 'verification', id: itemId(command.id), attempt, rootAlias: root.alias, commandLabel: command.label, command: command.command, state: 'running', outputTail: '' });
+      },
+      onFinish: (result, root) => {
+        wb.ledger.appendEvent(runId, 'verification.finished', { ...result });
+        wb.upsertVerification(task, {
+          kind: 'verification', id: itemId(result.commandId), attempt, rootAlias: root.alias, commandLabel: result.label, command: result.command,
+          state: result.status, exitCode: result.exitCode, durationMs: result.durationMs, outputTail: result.outputTail, logFile: result.logFile, failure: result.failure,
+        });
+      },
+    },
+    targets.map(({ root, tree }) => ({ root, tree, commands: wb.commandsOf(task, root.id) })),
+  );
+}
 
 // 按顺序执行；第一个失败即停止，其后的命令不再运行。
 export async function verifyRoots(ctx: VerifyContext, targets: { root: RootView; commands: VerifyCommand[]; tree?: string }[]): Promise<VerificationResult[]> {
