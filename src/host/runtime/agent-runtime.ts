@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { stat } from 'node:fs/promises';
-import { Agent, type AgentEvent, type AgentMessage, type BeforeToolCallContext, type StreamFn } from '@earendil-works/pi-agent-core';
+import { Agent, type AgentEvent, type AgentMessage, type StreamFn } from '@earendil-works/pi-agent-core';
 import { streamSimple } from '@earendil-works/pi-ai/api/openai-completions';
 import type { Model } from '@earendil-works/pi-ai';
 import { convertToLlm, SessionManager } from '@earendil-works/pi-coding-agent';
@@ -8,7 +8,6 @@ import {
   type Acceptance,
   type AppError,
   type ApprovalDecision,
-  type ApprovalRequest,
   type ChangesView,
   type DeliveryActionResult,
   type DeliveryView,
@@ -35,7 +34,7 @@ import { CONTINUE_TEXT, IMPLEMENT_PLAN_TEXT, VERIFY_ONLY_TEXT } from '../../shar
 import { createDocumentTools } from '../documents/index.js';
 import { injectSlots, reanchorSlots, tokensOf, type Slot } from '../memory/recall.js';
 import { createRootTools } from '../tools/native-tools.js';
-import { classify, registered, verdict } from '../tools/permission.js';
+import { classify, registered } from '../tools/permission.js';
 import { SandboxRunner } from '../tools/sandbox.js';
 import { createWebTools } from '../tools/web.js';
 import * as delivery from '../workspace/delivery.js';
@@ -43,6 +42,7 @@ import * as git from '../workspace/git.js';
 import { readWorkspaceRules } from '../workspace/workspace.js';
 import { compactIfNeeded, type CompactionOutcome } from './compaction.js';
 import type { HarnessPolicy } from './policy.js';
+import { PermissionGate } from '../policy/permission-gate.js';
 import { DeliveryService } from '../services/delivery.js';
 import { MemoryService } from '../services/memory.js';
 import { TaskService } from '../services/task-service.js';
@@ -55,7 +55,6 @@ type PromptEnd = RunEnd & { retry?: 'transient' | 'length' };
 type RunOptions = { verifyOnly?: boolean; resumed?: boolean };
 
 const ARGS_TEXT_LIMIT = 4 * 1024;
-const APPROVAL_ARGS_LIMIT = 8 * 1024;
 const OUTPUT_PREVIEW_LIMIT = 8 * 1024;
 // 一次尝试内的模型请求恢复预算：瞬时错误按退避重试，length 停止压缩后重试一次；用尽后照常以错误结束 Run。
 export const MODEL_RETRY = { transientDelaysMs: [2000, 8000, 20000], lengthRetries: 1 };
@@ -66,6 +65,7 @@ export class AgentRuntime {
   private readonly taskService: TaskService;
   private readonly memoryService: MemoryService;
   private readonly deliveryService: DeliveryService;
+  private readonly gate: PermissionGate;
   private readonly sandbox?: SandboxRunner;
   private assistantId?: string;
 
@@ -82,6 +82,7 @@ export class AgentRuntime {
     this.taskService = new TaskService(this.wb, task => this.deliveryService.restoreViews(task));
     this.memoryService = new MemoryService(this.wb);
     this.deliveryService = new DeliveryService(this.wb, this.taskService, this.memoryService);
+    this.gate = new PermissionGate(this.wb, this.taskService);
     this.taskService.restoreTasks();
   }
 
@@ -213,9 +214,7 @@ export class AgentRuntime {
   }
 
   decideApproval(approvalId: string, decision: ApprovalDecision): void {
-    const request = this.wb.broker.current;
-    if (request?.id === approvalId && decision === 'allow_task' && !request.grantKey) throw new Error('此操作不支持任务级授权');
-    this.wb.broker.decide(approvalId, decision);
+    this.gate.decideApproval(approvalId, decision);
   }
 
   getChanges(): Promise<ChangesView> {
@@ -369,7 +368,7 @@ ${this.stateBlock(task)}`,
           streamFn,
           toolExecution: 'sequential',
           transformContext: async messages => injectSlots(messages, slots, slotText => userMessage(slotText)),
-          beforeToolCall: (context, signal) => this.beforeToolCall(task, runId, context, signal),
+          beforeToolCall: (context, signal) => this.gate.beforeToolCall(task, runId, context, signal),
           prepareRequest: async (request, signal) => {
             // 系统提示是对话记录开头的 system 消息，不在会话里；压缩后需要原样放回。
             const leading = request.context.messages.filter(message => message.role === 'system');
@@ -625,7 +624,7 @@ ${this.stateBlock(task)}`,
     // web 工具不依赖工作目录，没有目录时也保持可用。
     const webTools = this.wb.webSearch ? createWebTools(this.wb.webSearch, { onStarted: toolCallId => this.markToolRunning(task, toolCallId) }) : [];
     if (!task.roots.length) return [...documentTools, ...webTools];
-    const trusted = this.trustedMcpNames();
+    const trusted = this.gate.trustedMcpNames();
     const mcpTools = this.wb.mcp.tools().filter(tool => registered(mode, classify(tool.name, trusted)));
     return [
       ...createRootTools({
@@ -650,81 +649,6 @@ ${this.stateBlock(task)}`,
         },
       })),
     ];
-  }
-
-  private trustedMcpNames(): Set<string> {
-    return new Set([...this.wb.mcp.bindings].filter(([, binding]) => binding.trustedReadOnly).map(([name]) => name));
-  }
-
-  private async beforeToolCall(task: TaskState, runId: string, context: BeforeToolCallContext, signal?: AbortSignal) {
-    const name = context.toolCall.name;
-    const toolCallId = context.toolCall.id;
-    const args = (context.args ?? {}) as Record<string, unknown>;
-    const cls = classify(name, this.trustedMcpNames());
-    const mode = task.permission.userMode;
-    const root = this.wb.rootFor(task, args);
-    const binding = this.wb.mcp.bindings.get(name);
-    const sandboxReady = this.wb.sandboxReady(task);
-    const runner: RunnerKind | undefined = cls === 'shell' ? (mode !== 'bypass' && sandboxReady ? 'sandbox' : 'direct') : undefined;
-    if (runner) this.wb.runners.set(toolCallId, runner);
-    const grantKey = cls === 'shell' && root ? `shell:${root.id}:${String(args.command)}` : binding ? `mcp:${binding.server}.${binding.tool}` : undefined;
-    const record = (decision: string, by: 'policy' | 'user') =>
-      this.wb.ledger.appendEvent(runId, 'permission.decided', { toolCallId, decision, by, userMode: mode, runnerKind: runner });
-
-    if (!this.wb.active || this.wb.active.id !== runId) return { block: true, reason: '当前执行已结束' };
-    const outcome = verdict(mode, cls, sandboxReady);
-    if (outcome === 'allow') {
-      record('allow', 'policy');
-      return undefined;
-    }
-    if (outcome === 'block') {
-      record('deny', 'policy');
-      this.wb.updateTool(task, toolCallId, { state: 'denied' });
-      return { block: true, reason: 'Auto 模式只在已验证的沙箱内自动执行命令，当前沙箱不可用或目录未授权，命令未执行。' };
-    }
-    if (grantKey && task.permission.grants.includes(grantKey)) {
-      record('allow_task', 'policy');
-      return undefined;
-    }
-
-    const argsText = JSON.stringify(args, null, 2);
-    const request: ApprovalRequest = {
-      id: randomUUID(),
-      runId,
-      toolCallId,
-      tool: name,
-      summary: cls === 'shell' ? String(args.command) : binding ? `${binding.server}.${binding.tool}` : String(args.path ?? name),
-      rootId: root?.id,
-      rootAlias: root?.alias,
-      cwd: root?.path,
-      argsText: argsText.slice(0, APPROVAL_ARGS_LIMIT),
-      grantKey: cls === 'edit' ? undefined : grantKey,
-      runner,
-    };
-    task.run = { ...task.run!, phase: 'awaiting_approval' };
-    this.wb.updateTool(task, toolCallId, { state: 'awaiting_approval' });
-    this.wb.emitRun(task);
-    const pending = this.wb.broker.request(request, signal);
-    this.wb.emit({ type: 'approval.requested', value: request });
-    this.wb.emitSnapshot();
-    const decision = await pending;
-    if (task.run?.phase === 'awaiting_approval') task.run = { ...task.run, phase: 'running' };
-    this.wb.emitRun(task);
-    this.wb.emitSnapshot();
-    record(decision, 'user');
-    if (decision === 'cancel') {
-      this.wb.updateTool(task, toolCallId, { state: 'cancelled' });
-      return { block: true, reason: '用户已取消，操作未执行' };
-    }
-    if (decision === 'deny') {
-      this.wb.updateTool(task, toolCallId, { state: 'denied' });
-      return { block: true, reason: '用户拒绝执行，操作未运行。请说明原因或采用可行替代。' };
-    }
-    if (decision === 'allow_task' && grantKey && !task.permission.grants.includes(grantKey)) {
-      task.permission = { ...task.permission, grants: [...task.permission.grants, grantKey] };
-      this.taskService.save(task);
-    }
-    return undefined;
   }
 
   private onAgentEvent(task: TaskState, runId: string, event: AgentEvent): void {
