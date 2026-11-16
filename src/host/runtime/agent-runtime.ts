@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { stat } from 'node:fs/promises';
-import { Agent, type AgentEvent, type AgentMessage, type StreamFn } from '@earendil-works/pi-agent-core';
+import { Agent, type AgentMessage, type StreamFn } from '@earendil-works/pi-agent-core';
 import { streamSimple } from '@earendil-works/pi-ai/api/openai-completions';
 import type { Model } from '@earendil-works/pi-ai';
-import { convertToLlm, SessionManager } from '@earendil-works/pi-coding-agent';
+import { convertToLlm } from '@earendil-works/pi-coding-agent';
 import {
   type Acceptance,
   type AppError,
@@ -22,40 +22,33 @@ import {
   type PermissionSetting,
   type RootView,
   type RunEvent,
-  type RunnerKind,
   type SnapshotEnvelope,
-  type TimelineItem,
-  type ToolItem,
   type UserMode,
   type VerificationResult,
   type WorkbenchEvent,
 } from '../../shared/contracts/index.js';
 import { CONTINUE_TEXT, IMPLEMENT_PLAN_TEXT, VERIFY_ONLY_TEXT } from '../../shared/constants.js';
-import { createDocumentTools } from '../documents/index.js';
 import { injectSlots, reanchorSlots, tokensOf, type Slot } from '../memory/recall.js';
-import { createRootTools } from '../tools/native-tools.js';
-import { classify, registered } from '../tools/permission.js';
 import { SandboxRunner } from '../tools/sandbox.js';
-import { createWebTools } from '../tools/web.js';
 import * as delivery from '../workspace/delivery.js';
 import * as git from '../workspace/git.js';
 import { readWorkspaceRules } from '../workspace/workspace.js';
 import { compactIfNeeded, type CompactionOutcome } from './compaction.js';
 import type { HarnessPolicy } from './policy.js';
 import { PermissionGate } from '../policy/permission-gate.js';
+import { AgentEvents } from '../services/agent-events.js';
 import { DeliveryService } from '../services/delivery.js';
 import { MemoryService } from '../services/memory.js';
 import { TaskService } from '../services/task-service.js';
+import { buildTools } from '../services/toolset.js';
 import { createError, userMessage, Workbench, type RunEnd, type SandboxOptions, type TaskState } from '../services/workbench.js';
 import { recoveryBrief, repairDanglingToolCalls, unknownCalls, type RootRecovery } from './recovery.js';
-import { createNavigationTools, repositoryProfile } from '../engineering/navigation.js';
+import { repositoryProfile } from '../engineering/navigation.js';
 import { failureHash, feedbackMessage, runVerification } from '../services/verification.js';
 
 type PromptEnd = RunEnd & { retry?: 'transient' | 'length' };
 type RunOptions = { verifyOnly?: boolean; resumed?: boolean };
 
-const ARGS_TEXT_LIMIT = 4 * 1024;
-const OUTPUT_PREVIEW_LIMIT = 8 * 1024;
 // 一次尝试内的模型请求恢复预算：瞬时错误按退避重试，length 停止压缩后重试一次；用尽后照常以错误结束 Run。
 export const MODEL_RETRY = { transientDelaysMs: [2000, 8000, 20000], lengthRetries: 1 };
 const TRANSIENT = /\b(?:408|409|425|429|500|502|503|504|529)\b|rate.?limit|overloaded|too busy|temporarily unavailable|ECONNRESET|ETIMEDOUT|ECONNREFUSED|EAI_AGAIN|socket hang up|fetch failed|network error|terminated/i;
@@ -66,8 +59,8 @@ export class AgentRuntime {
   private readonly memoryService: MemoryService;
   private readonly deliveryService: DeliveryService;
   private readonly gate: PermissionGate;
+  private readonly events: AgentEvents;
   private readonly sandbox?: SandboxRunner;
-  private assistantId?: string;
 
   // 未提供 dataDir 时（运行时测试）账本与会话都只在内存中。
   constructor(
@@ -83,6 +76,7 @@ export class AgentRuntime {
     this.memoryService = new MemoryService(this.wb);
     this.deliveryService = new DeliveryService(this.wb, this.taskService, this.memoryService);
     this.gate = new PermissionGate(this.wb, this.taskService);
+    this.events = new AgentEvents(this.wb);
     this.taskService.restoreTasks();
   }
 
@@ -335,7 +329,7 @@ export class AgentRuntime {
       const rules = await readWorkspaceRules(task.roots, this.rulesPath);
       await this.taskService.refreshRoots(task);
       task.profile = this.wb.navigationEnabled ? (await Promise.all(task.roots.map(root => repositoryProfile(root).catch(() => '')))).filter(Boolean).join('\n') : undefined;
-      const tools = this.buildTools(task);
+      const tools = buildTools(this.wb, task, this.events, this.gate.trustedMcpNames());
       this.wb.ledger.appendEvent(runId, 'run.started', {
         modelId: profile?.modelId, permission: task.permission, sandboxStatus: this.wb.sandboxStatus(),
         roots: task.roots.map(({ id, alias, path }) => ({ id, alias, path })),
@@ -393,7 +387,7 @@ ${this.stateBlock(task)}`,
           },
         });
         if (this.wb.active?.id === runId) this.wb.active.agent = agent;
-        unsubscribe = agent.subscribe(event => this.onAgentEvent(task, runId, event));
+        unsubscribe = agent.subscribe(event => this.events.onAgentEvent(task, runId, event));
       }
       const end = await this.drive(task, runId, agent, first, options, startTrees, mutationsAtStart, slots);
       await this.endRun(task, runId, end.phase, end.stopReason, end.error);
@@ -609,141 +603,6 @@ ${this.stateBlock(task)}`,
     });
   }
 
-  private buildTools(task: TaskState) {
-    const mode = task.permission.userMode;
-    const documentTools = task.documents.length ? createDocumentTools({
-      documents: () => task.documents,
-      library: this.wb.library,
-      onStarted: toolCallId => this.markToolRunning(task, toolCallId),
-      vision: this.wb.profile?.vision === true,
-      onChanged: record => {
-        task.documents = task.documents.map(doc => doc.id === record.id ? record : doc);
-        this.wb.ledger.saveDocuments(task.id, task.documents);
-      },
-    }) : [];
-    // web 工具不依赖工作目录，没有目录时也保持可用。
-    const webTools = this.wb.webSearch ? createWebTools(this.wb.webSearch, { onStarted: toolCallId => this.markToolRunning(task, toolCallId) }) : [];
-    if (!task.roots.length) return [...documentTools, ...webTools];
-    const trusted = this.gate.trustedMcpNames();
-    const mcpTools = this.wb.mcp.tools().filter(tool => registered(mode, classify(tool.name, trusted)));
-    return [
-      ...createRootTools({
-        roots: task.roots,
-        fullAccess: mode === 'bypass',
-        sandbox: this.wb.sandbox,
-        includeEdit: mode !== 'plan',
-        includeShell: mode !== 'plan',
-        vision: this.wb.profile?.vision === true,
-        shellMaxTimeoutSec: this.wb.policy.params.shellMaxTimeoutSec,
-        onStarted: (toolCallId, root) => this.markToolRunning(task, toolCallId, root),
-        runnerOf: toolCallId => this.wb.runners.get(toolCallId) ?? 'direct',
-      }),
-      ...documentTools,
-      ...webTools,
-      ...(this.wb.navigationEnabled ? createNavigationTools({ roots: task.roots, onStarted: (toolCallId, root) => this.markToolRunning(task, toolCallId, root) }) : []),
-      ...mcpTools.map(tool => ({
-        ...tool,
-        execute: (toolCallId: string, params: any, signal?: AbortSignal, onUpdate?: any) => {
-          this.markToolRunning(task, toolCallId);
-          return tool.execute(toolCallId, params, signal, onUpdate);
-        },
-      })),
-    ];
-  }
-
-  private onAgentEvent(task: TaskState, runId: string, event: AgentEvent): void {
-    if (event.type === 'message_end') {
-      task.session.appendMessage(event.message as Parameters<SessionManager['appendMessage']>[0]);
-      // Provider 没有返回 token 数时不记录。
-      if (event.message.role === 'assistant' && event.message.usage?.totalTokens > 0) {
-        this.wb.ledger.appendEvent(runId, 'model.usage', { ...event.message.usage });
-      }
-    }
-    if (event.type === 'message_start' && event.message.role === 'assistant') {
-      this.assistantId = randomUUID();
-      const item: TimelineItem = { kind: 'message', id: this.assistantId, role: 'assistant', text: '' };
-      task.timeline.push(item);
-      this.wb.emit({ type: 'message.started', id: item.id, role: 'assistant' });
-    } else if (event.type === 'message_update' && event.assistantMessageEvent.type === 'text_delta' && this.assistantId) {
-      const delta = event.assistantMessageEvent.delta;
-      const item = task.timeline.find((value): value is Extract<TimelineItem, { kind: 'message' }> => value.kind === 'message' && value.id === this.assistantId);
-      if (item) item.text += delta;
-      this.wb.emit({ type: 'message.delta', id: this.assistantId, text: delta });
-    } else if (event.type === 'message_end' && event.message.role === 'assistant') {
-      const textContent = event.message.content.filter(block => block.type === 'text').map(block => block.text).join('');
-      if (this.assistantId) {
-        const item = task.timeline.find((value): value is Extract<TimelineItem, { kind: 'message' }> => value.kind === 'message' && value.id === this.assistantId);
-        if (item) item.text = textContent;
-        this.wb.emit({ type: 'message.ended', id: this.assistantId, text: textContent });
-        this.assistantId = undefined;
-      }
-    } else if (event.type === 'tool_execution_start') {
-      const args = (event.args ?? {}) as Record<string, unknown>;
-      const root = this.wb.rootFor(task, args);
-      const binding = this.wb.mcp.bindings.get(event.toolName);
-      const item: ToolItem = {
-        kind: 'tool', toolCallId: event.toolCallId, name: event.toolName, args: event.args, state: 'requested', output: '',
-        // MCP 与任务文档工具不属于任何工作目录。
-        ...(binding || event.toolName.startsWith('doc_') ? {} : { rootId: root?.id, rootAlias: root?.alias, cwd: root?.path }),
-        source: binding ? { mcpServer: binding.server, tool: binding.tool } : undefined,
-      };
-      task.timeline.push(item);
-      this.wb.emit({ type: 'tool.updated', value: item });
-      this.wb.ledger.appendEvent(runId, 'tool.requested', {
-        toolCallId: event.toolCallId, name: event.toolName, rootId: item.rootId, cwd: item.cwd,
-        argsText: JSON.stringify(event.args).slice(0, ARGS_TEXT_LIMIT),
-      });
-    } else if (event.type === 'tool_execution_update') {
-      this.wb.updateTool(task, event.toolCallId, { state: 'running', output: resultText(event.partialResult) });
-    } else if (event.type === 'tool_execution_end') {
-      this.finishTool(task, runId, event.toolCallId, event.result, event.isError);
-    }
-  }
-
-  private finishTool(task: TaskState, runId: string, toolCallId: string, result: unknown, isError: boolean): void {
-    const current = task.timeline.find((item): item is ToolItem => item.kind === 'tool' && item.toolCallId === toolCallId);
-    const cancelled = this.wb.active?.cancelRequested || current?.state === 'cancelled';
-    const denied = current?.state === 'denied';
-    const failed = isError || (typeof result === 'object' && result !== null && 'isError' in result && result.isError === true);
-    const state = denied ? 'denied' : cancelled ? 'cancelled' : failed ? 'failed' : 'succeeded';
-    const exitCode = current?.name === 'powershell' ? exitCodeOf(result) : undefined;
-    const started = this.wb.startedAt.get(toolCallId);
-    const durationMs = started ? Date.now() - started : undefined;
-    const output = resultText(result);
-    if (state === 'succeeded' && (current?.name === 'edit' || current?.name === 'write') && current.rootId) {
-      task.mutations.set(current.rootId, (task.mutations.get(current.rootId) ?? 0) + 1);
-    }
-    this.wb.updateTool(task, toolCallId, {
-      state, output, exitCode, durationMs,
-      error: failed && !denied && !cancelled ? { code: 'TOOL_FAILED', message: '工具执行失败' } : undefined,
-    });
-    if (failed && !denied && !cancelled && task.run) {
-      task.run = { ...task.run, toolErrors: true };
-      this.wb.emitRun(task);
-    }
-    const details = (typeof result === 'object' && result !== null && 'details' in result ? result.details : undefined) as { fullOutputPath?: string; mcp?: unknown } | undefined;
-    const structured = current?.source && typeof result === 'object' && result !== null && 'structuredContent' in result ? result.structuredContent : undefined;
-    const runner = this.wb.runners.get(toolCallId);
-    this.wb.ledger.appendEvent(runId, 'tool.finished', {
-      toolCallId, name: current?.name, state, runnerKind: runner,
-      sandboxOutcome: runner === 'sandbox' ? 'enforced' : current?.name === 'powershell' ? 'not_sandboxed' : undefined,
-      exitCode, durationMs, errorClass: errorClassOf(state, runner, output), outputPreview: output.slice(-OUTPUT_PREVIEW_LIMIT), fullOutputPath: details?.fullOutputPath,
-      structuredContent: structured, mcp: details?.mcp,
-    });
-    this.wb.startedAt.delete(toolCallId);
-  }
-
-  private markToolRunning(task: TaskState, toolCallId: string, root?: RootView): void {
-    const runId = task.run!.id;
-    this.wb.startedAt.set(toolCallId, Date.now());
-    this.wb.updateTool(task, toolCallId, { state: 'running', runner: this.wb.runners.get(toolCallId) });
-    this.wb.ledger.appendEvent(runId, 'tool.started', { toolCallId, rootId: root?.id });
-    if (task.run && task.run.phase !== 'cancelling') {
-      task.run = { ...task.run, phase: 'running' };
-      this.wb.emitRun(task);
-    }
-  }
-
   // ---- 记忆召回 ----
 
   // ---- Compaction ----
@@ -847,26 +706,5 @@ ${this.wb.policy.playbook}` : ''}`;
     };
   }
 
-}
-
-function resultText(result: unknown): string {
-  if (!result || typeof result !== 'object' || !('content' in result) || !Array.isArray(result.content)) return '';
-  return result.content.filter(block => block?.type === 'text').map(block => block.text).join('');
-}
-
-// 评测需要按类别统计工具失败：用户拒绝、取消、超时、沙箱拒绝访问、其他工具错误。
-function errorClassOf(state: ToolItem['state'], runner: RunnerKind | undefined, output: string): string | undefined {
-  if (state === 'succeeded') return undefined;
-  if (state === 'denied' || state === 'cancelled') return state;
-  if (/timed out|timeout|超时/i.test(output)) return 'timeout';
-  if (runner === 'sandbox' && /access (is )?denied|拒绝访问/i.test(output)) return 'sandbox';
-  return 'tool_error';
-}
-
-function exitCodeOf(result: unknown): number | undefined {
-  if (!result || typeof result !== 'object' || !('structuredContent' in result)) return undefined;
-  const structured = result.structuredContent;
-  if (!structured || typeof structured !== 'object' || !('exit_code' in structured)) return undefined;
-  return typeof structured.exit_code === 'number' ? structured.exit_code : undefined;
 }
 
