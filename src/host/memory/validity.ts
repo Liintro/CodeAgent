@@ -1,6 +1,6 @@
 import { stat } from 'node:fs/promises';
 import { posix } from 'node:path';
-import type { MemoryValidity } from '../../shared/contracts.js';
+import type { MemoryValidity } from '../../shared/contracts/index.js';
 import * as git from '../workspace/git.js';
 import type { RepoRef } from './repo.js';
 import type { Anchor, MemoryRow } from './store.js';

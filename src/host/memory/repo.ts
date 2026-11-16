@@ -1,4 +1,4 @@
-import type { RootView } from '../../shared/contracts.js';
+import type { RootView } from '../../shared/contracts/index.js';
 import * as git from '../workspace/git.js';
 
 export type RepoRef = {

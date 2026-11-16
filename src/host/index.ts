@@ -1,4 +1,5 @@
-import type { HostRequest, Reply, WorkbenchEvent } from '../shared/contracts.js';
+import type { HostRequest, Reply, WorkbenchEvent } from '../shared/contracts/index.js';
+import { PROTOCOL_VERSION } from '../shared/constants.js';
 import { AgentRuntime } from './runtime/agent-runtime.js';
 
 let runtime: AgentRuntime | undefined;
@@ -16,6 +17,7 @@ process.parentPort?.on('message', async ({ data }: { data: HostRequest }) => {
   let reply: Reply<unknown>;
   try {
     if (command.type === 'initialize') {
+      if (command.protocolVersion !== PROTOCOL_VERSION) throw new Error(`主进程与运行进程的协议版本不一致（${command.protocolVersion} / ${PROTOCOL_VERSION}）`);
       runtime = new AgentRuntime(command.hostInstanceId, command.rulesPath, (event: WorkbenchEvent) => send({ event }), {
         exe: command.sandboxExe,
         tempDir: command.sandboxTempDir,

@@ -1,4 +1,4 @@
-import type { NotifyLevel, WorkbenchEvent, WorkbenchSnapshot } from './contracts.js';
+import type { NotifyLevel, WorkbenchEvent, WorkbenchSnapshot } from './contracts/index.js';
 
 /** 一条需要告诉用户的事情。主进程据此发系统通知，渲染层据此弹应用内提醒；两边用同一套规则。 */
 export type Attention = {

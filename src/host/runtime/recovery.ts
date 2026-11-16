@@ -1,6 +1,6 @@
 import type { SessionManager } from '@earendil-works/pi-coding-agent';
 import { RECOVERY_PREFIX } from '../../shared/constants.js';
-import type { FileChange, RunEvent } from '../../shared/contracts.js';
+import type { FileChange, RunEvent } from '../../shared/contracts/index.js';
 
 export type UnknownCall = { name: string; rootAlias?: string; detail: string; at: number };
 export type RootRecovery = { alias: string; sinceRun: FileChange[]; sinceBaseline: FileChange[]; missing?: boolean };

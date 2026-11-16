@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
-import type { MemoryKind } from '../../shared/contracts.js';
+import type { MemoryKind } from '../../shared/contracts/index.js';
 
 export type Anchor = { path: string; preBlob?: string; postBlob?: string };
 

@@ -1,4 +1,4 @@
-import type { DetectedCommand, Diagnostic, ParsedFailure, RootView } from '../../shared/contracts.js';
+import type { DetectedCommand, Diagnostic, ParsedFailure, RootView } from '../../shared/contracts/index.js';
 import { cpp } from './cpp.js';
 import { go } from './go.js';
 import { java } from './java.js';

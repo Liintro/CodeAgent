@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import type { Acceptance, Delivery, RootDeliveryState, RunEvent, RunEventType, RunPhase, UserMode } from '../../shared/contracts.js';
+import type { Acceptance, Delivery, RootDeliveryState, RunEvent, RunEventType, RunPhase, UserMode } from '../../shared/contracts/index.js';
 import type { DocumentRecord } from '../documents/index.js';
 
 export type RunRecord = {
