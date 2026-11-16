@@ -1,8 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { stat } from 'node:fs/promises';
-import { Agent, type AgentMessage, type StreamFn } from '@earendil-works/pi-agent-core';
-import { streamSimple } from '@earendil-works/pi-ai/api/openai-completions';
-import type { Model } from '@earendil-works/pi-ai';
+import { Agent, type AgentMessage } from '@earendil-works/pi-agent-core';
 import { convertToLlm } from '@earendil-works/pi-coding-agent';
 import {
   type Acceptance,
@@ -39,6 +37,7 @@ import { PermissionGate } from '../policy/permission-gate.js';
 import { AgentEvents } from '../services/agent-events.js';
 import { DeliveryService } from '../services/delivery.js';
 import { MemoryService } from '../services/memory.js';
+import { ModelService } from '../services/model.js';
 import { TaskService } from '../services/task-service.js';
 import { buildTools } from '../services/toolset.js';
 import { createError, userMessage, Workbench, type RunEnd, type SandboxOptions, type TaskState } from '../services/workbench.js';
@@ -46,12 +45,10 @@ import { recoveryBrief, repairDanglingToolCalls, unknownCalls, type RootRecovery
 import { repositoryProfile } from '../engineering/navigation.js';
 import { failureHash, feedbackMessage, runVerification } from '../services/verification.js';
 
-type PromptEnd = RunEnd & { retry?: 'transient' | 'length' };
 type RunOptions = { verifyOnly?: boolean; resumed?: boolean };
 
-// 一次尝试内的模型请求恢复预算：瞬时错误按退避重试，length 停止压缩后重试一次；用尽后照常以错误结束 Run。
-export const MODEL_RETRY = { transientDelaysMs: [2000, 8000, 20000], lengthRetries: 1 };
-const TRANSIENT = /\b(?:408|409|425|429|500|502|503|504|529)\b|rate.?limit|overloaded|too busy|temporarily unavailable|ECONNRESET|ETIMEDOUT|ECONNREFUSED|EAI_AGAIN|socket hang up|fetch failed|network error|terminated/i;
+
+export { MODEL_RETRY } from '../services/model.js';
 
 export class AgentRuntime {
   private readonly wb: Workbench;
@@ -60,6 +57,7 @@ export class AgentRuntime {
   private readonly deliveryService: DeliveryService;
   private readonly gate: PermissionGate;
   private readonly events: AgentEvents;
+  private readonly model: ModelService;
   private readonly sandbox?: SandboxRunner;
 
   // 未提供 dataDir 时（运行时测试）账本与会话都只在内存中。
@@ -77,6 +75,7 @@ export class AgentRuntime {
     this.deliveryService = new DeliveryService(this.wb, this.taskService, this.memoryService);
     this.gate = new PermissionGate(this.wb, this.taskService);
     this.events = new AgentEvents(this.wb);
+    this.model = new ModelService(this.wb);
     this.taskService.restoreTasks();
   }
 
@@ -184,16 +183,7 @@ export class AgentRuntime {
   }
 
   testModel(): Promise<{ text: string }> {
-    this.wb.assertConfigured();
-    this.wb.assertIdle();
-    const id = randomUUID();
-    this.wb.error = undefined;
-    this.wb.testRun = { id, taskId: '', phase: 'running', toolErrors: false };
-    this.wb.active = { id, kind: 'test', cancelRequested: false, verifyAbort: new AbortController() };
-    this.wb.emit({ type: 'run.changed', value: this.wb.testRun });
-    const done = this.runModelTest(id);
-    this.wb.active.done = done;
-    return done;
+    return this.model.testModel();
   }
 
   cancelRun(runId: string): void {
@@ -346,10 +336,10 @@ export class AgentRuntime {
         const anchor = first.at(-1) as Extract<AgentMessage, { role: 'user' }>;
         const recalled = await this.memoryService.recallSlot(task, runId, 'start', `${task.title} ${text}`);
         if (recalled) slots.push({ anchorTimestamp: anchor.timestamp, anchorText: text, text: recalled });
-        const streamFn = this.streamFn(profile!);
+        const streamFn = this.model.streamFn(profile!);
         agent = new Agent({
           initialState: {
-            model: this.createModel(profile!),
+            model: this.model.createModel(profile!),
             messages: task.session.buildSessionContext().messages as AgentMessage[],
             systemPrompt: `${rules.text}
 
@@ -420,7 +410,7 @@ ${this.stateBlock(task)}`,
     let previous: { hash: string; fingerprint: string } | undefined;
     for (let attempt = 0; ; attempt++) {
       if (input) {
-        const ended = await this.promptWithRecovery(task, runId, agent!, input);
+        const ended = await this.model.promptWithRecovery(task, runId, agent!, input);
         if (ended) return ended;
       }
       if (task.permission.userMode === 'plan') return { phase: 'finished', stopReason: 'passed' };
@@ -459,70 +449,6 @@ ${this.stateBlock(task)}`,
     }
   }
 
-  // 只重发失败的那一次模型请求：失败的 assistant 消息从 Agent 状态与会话分支中移除，然后从原有记录继续，
-  // 已完成的工具调用不会重放；取消随时生效，重试用尽后返回原来的错误。
-  private async promptWithRecovery(task: TaskState, runId: string, agent: Agent, input: AgentMessage[]): Promise<RunEnd | undefined> {
-    let ended = await this.promptOnce(agent, () => agent.prompt(input));
-    const used = { transient: 0, length: 0 };
-    while (ended?.retry) {
-      const kind = ended.retry;
-      const budget = kind === 'transient' ? MODEL_RETRY.transientDelaysMs.length : MODEL_RETRY.lengthRetries;
-      if (used[kind] >= budget) {
-        const { retry: _retry, ...terminal } = ended;
-        this.wb.ledger.appendEvent(runId, 'model.retry', { kind, attempt: used[kind], exhausted: true, error: terminal.error });
-        return kind === 'transient' ? { ...terminal, error: { ...terminal.error!, message: `模型服务持续不可用（已重试 ${used[kind]} 次）` } } : terminal;
-      }
-      used[kind]++;
-      const delayMs = kind === 'transient' ? MODEL_RETRY.transientDelaysMs[used[kind] - 1] : 0;
-      this.dropFailedAssistant(task, agent);
-      this.wb.ledger.appendEvent(runId, 'model.retry', { kind, attempt: used[kind], delayMs, error: ended.error });
-      task.timeline.push({ kind: 'notice', id: randomUUID(), text: kind === 'transient' ? `模型服务暂时不可用，${Math.round(delayMs / 1000)} 秒后重试（第 ${used[kind]} 次）` : '模型输出达到长度上限，压缩上下文后重试' });
-      this.wb.emitSnapshot();
-      if (kind === 'length' && this.wb.active?.id === runId) this.wb.active.forceCompaction = true;
-      if (!await this.waitUnlessCancelled(delayMs)) return { phase: 'cancelled', stopReason: 'cancelled' };
-      ended = await this.promptOnce(agent, () => agent.continue());
-    }
-    return ended;
-  }
-
-  private dropFailedAssistant(task: TaskState, agent: Agent): void {
-    const last = agent.state.messages.at(-1);
-    if (last?.role === 'assistant') agent.state.messages = agent.state.messages.slice(0, -1);
-    const leaf = task.session.getLeafEntry();
-    if (leaf?.type === 'message' && leaf.message.role === 'assistant') {
-      if (leaf.parentId) task.session.branch(leaf.parentId);
-      else task.session.resetLeaf();
-    }
-  }
-
-  private async waitUnlessCancelled(ms: number): Promise<boolean> {
-    const signal = this.wb.active?.verifyAbort.signal;
-    if (ms > 0 && signal && !signal.aborted) {
-      await new Promise<void>(done => {
-        const timer = setTimeout(done, ms);
-        signal.addEventListener('abort', () => { clearTimeout(timer); done(); }, { once: true });
-      });
-    }
-    return !this.wb.active?.cancelRequested;
-  }
-
-  private async promptOnce(agent: Agent, start: () => Promise<void>): Promise<PromptEnd | undefined> {
-    const prompting = start();
-    if (this.wb.active?.cancelRequested) agent.abort();
-    await prompting;
-    await agent.waitForIdle();
-    const lastAssistant = [...agent.state.messages].reverse().find(message => message.role === 'assistant');
-    const stopReason = lastAssistant?.role === 'assistant' ? lastAssistant.stopReason : undefined;
-    if (this.wb.active?.cancelRequested || stopReason === 'aborted') return { phase: 'cancelled', stopReason: 'cancelled' };
-    if (agent.state.errorMessage || stopReason === 'error') {
-      const detail = agent.state.errorMessage || (lastAssistant?.role === 'assistant' ? lastAssistant.errorMessage : undefined);
-      const error = createError('MODEL_REQUEST_FAILED', '模型请求失败', detail, this.wb.apiKey);
-      return { phase: 'failed', stopReason: 'agent_error', error, ...(TRANSIENT.test(detail ?? '') ? { retry: 'transient' as const } : {}) };
-    }
-    if (stopReason === 'length') return { phase: 'failed', stopReason: 'agent_error', error: createError('OUTPUT_LENGTH_LIMIT', '已达到输出长度限制', undefined, this.wb.apiKey), retry: 'length' };
-    return undefined;
-  }
-
   private async endRun(task: TaskState, runId: string, phase: RunEnd['phase'], stopReason: string, error?: AppError): Promise<void> {
     if (!this.wb.ledger.events(runId).some(event => event.type === 'run.started')) {
       this.wb.ledger.appendEvent(runId, 'run.started', { permission: task.permission, roots: task.roots.map(({ id, alias, path }) => ({ id, alias, path })), trigger: 'user' });
@@ -543,64 +469,6 @@ ${this.stateBlock(task)}`,
     this.taskService.save(task);
     this.wb.emitRun(task);
     this.wb.emitSnapshot();
-  }
-
-  private async runModelTest(id: string): Promise<{ text: string }> {
-    const profile = this.wb.profile!;
-    const agent = new Agent({
-      initialState: { model: this.createModel(profile), systemPrompt: '请简短使用中文回答。', tools: [] },
-      streamFn: (model, context, options) => streamSimple(model as Model<'openai-completions'>, context, {
-        ...options,
-        apiKey: this.wb.apiKey,
-        maxTokens: Math.min(profile.maxOutputTokens, 128),
-        maxRetries: 0,
-      }),
-    });
-    if (this.wb.active?.id === id) this.wb.active.agent = agent;
-    const timer = setTimeout(() => agent.abort(), 30000);
-    const finish = (phase: 'finished' | 'cancelled' | 'failed') => {
-      this.wb.testRun = { ...this.wb.testRun!, phase };
-      this.wb.emit({ type: 'run.changed', value: this.wb.testRun });
-    };
-    try {
-      const prompting = agent.prompt('请用一句中文回复“连接成功”。');
-      if (this.wb.active?.cancelRequested) agent.abort();
-      await prompting;
-      if (this.wb.active?.cancelRequested) {
-        finish('cancelled');
-        throw new Error('连接测试已取消');
-      }
-      const last = agent.state.messages.at(-1);
-      if (agent.state.errorMessage || last?.role !== 'assistant' || last.stopReason === 'error' || last.stopReason === 'aborted') {
-        throw new Error(agent.state.errorMessage || (last?.role === 'assistant' ? last.errorMessage : undefined) || '模型未返回有效响应');
-      }
-      finish('finished');
-      return { text: last.content.filter(block => block.type === 'text').map(block => block.text).join('') };
-    } catch (error) {
-      if (this.wb.testRun?.phase === 'running' || this.wb.testRun?.phase === 'cancelling') {
-        if (this.wb.active?.cancelRequested) finish('cancelled');
-        else {
-          finish('failed');
-          this.wb.error = createError('MODEL_TEST_FAILED', '连接测试失败', error, this.wb.apiKey);
-          this.wb.emit({ type: 'error', value: this.wb.error });
-        }
-      }
-      throw error;
-    } finally {
-      clearTimeout(timer);
-      if (this.wb.active?.id === id) this.wb.active = undefined;
-    }
-  }
-
-  private streamFn(profile: ModelInput): StreamFn {
-    return (currentModel, context, options) => streamSimple(currentModel as Model<'openai-completions'>, context, {
-      ...options,
-      apiKey: this.wb.apiKey,
-      maxTokens: options?.maxTokens ?? profile.maxOutputTokens,
-      maxRetries: 0,
-      // 思考强度随等级透传；端点不支持该参数时会以模型错误呈现，不伪装成已生效。
-      ...(profile.reasoning ? { reasoning: profile.reasoning } : {}),
-    });
   }
 
   // ---- 记忆召回 ----
@@ -688,22 +556,6 @@ ${roots || '（未选择目录）'}
 
 ## 经验手册（从历史任务轨迹总结）
 ${this.wb.policy.playbook}` : ''}`;
-  }
-
-  private createModel(profile: ModelInput): Model<'openai-completions'> {
-    return {
-      id: profile.modelId,
-      name: profile.modelId,
-      api: 'openai-completions',
-      provider: 'codeagent',
-      baseUrl: profile.baseUrl,
-      // pi-ai 按这个开关决定是否携带思考参数；实际等级在 streamFn 里随请求发送。
-      reasoning: profile.reasoning !== false,
-      input: profile.vision ? ['text', 'image'] : ['text'],
-      contextWindow: profile.contextWindow,
-      maxTokens: profile.maxOutputTokens,
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    };
   }
 
 }
