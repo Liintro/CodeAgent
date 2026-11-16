@@ -4,6 +4,7 @@ import { convertToLlm } from '@earendil-works/pi-coding-agent';
 import type { AppError } from '../../shared/contracts/index.js';
 import { CONTINUE_TEXT, IMPLEMENT_PLAN_TEXT, VERIFY_ONLY_TEXT } from '../../shared/constants.js';
 import { repositoryProfile } from '../engineering/navigation.js';
+import { budgetReport } from '../kernel/budget.js';
 import { createAgent, type KernelAgent } from '../kernel/index.js';
 import { injectSlots, reanchorSlots, tokensOf, type Slot } from '../memory/recall.js';
 import type { PermissionGate } from '../policy/permission-gate.js';
@@ -257,6 +258,7 @@ ${stateBlock(task, this.wb.profile?.vision)}`,
       const view = await deliveries.finalizeDelivery(task, runId, trees);
       if (view) await memory.captureMemory(task, runId, view);
     }
+    this.wb.ledger.appendEvent(runId, 'budget.updated', { ...budgetReport(this.wb.ledger.events(runId), Date.now(), this.wb.policy.settings.budget) });
     this.wb.ledger.appendEvent(runId, 'run.ended', { phase, stopReason, error });
     this.wb.ledger.endRun(runId, phase, stopReason, this.wb.profile?.modelId);
     task.run = { ...task.run!, phase };
