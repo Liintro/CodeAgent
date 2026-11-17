@@ -2,7 +2,6 @@ import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AgentMessage } from '@earendil-works/pi-agent-core';
-import type { SessionManager } from '@earendil-works/pi-coding-agent';
 import type {
   Acceptance,
   AppError,
@@ -29,6 +28,7 @@ import type {
 import { DocumentLibrary, type DocumentRecord } from '../documents/index.js';
 import { kernelFromEnv, type KernelAgent, type KernelName } from '../kernel/index.js';
 import { MemoryStore } from '../memory/store.js';
+import type { SessionStore } from '../kernel/session.js';
 import { Ledger } from '../runtime/ledger.js';
 import { initialPolicy, type HarnessPolicy } from '../runtime/policy.js';
 import { McpManager } from '../tools/mcp.js';
@@ -52,7 +52,7 @@ export type TaskState = {
   mutations: Map<string, number>;
   interrupted: boolean;
   loaded: boolean;
-  session: SessionManager;
+  session: SessionStore;
   timeline: TimelineItem[];
   run?: RunView;
   error?: AppError;

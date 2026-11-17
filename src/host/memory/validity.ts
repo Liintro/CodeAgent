@@ -16,11 +16,7 @@ export async function evaluate(repo: RepoRef, items: MemoryRow[], anchorsOf: Map
     return result;
   }
   const gitRoot = repo.gitRoot;
-  const paths = [...new Set(items.flatMap(item => (anchorsOf.get(item.id) ?? []).map(anchor => anchor.path)))];
-  const present = (await Promise.all(paths.map(path => stat(posix.join(gitRoot.replaceAll('\\', '/'), path)).then(() => true, () => false))));
-  const existing = paths.filter((_, index) => present[index]);
-  const hashes = await git.hashFiles(gitRoot, existing);
-  const current = new Map<string, string>(existing.map((path, index) => [path, hashes[index]]));
+  const current = await currentBlobs(gitRoot, [...new Set(items.flatMap(item => (anchorsOf.get(item.id) ?? []).map(anchor => anchor.path)))]);
   // 路径已不存在时，按 blob 在索引中找内容未变的重命名；找到就按新路径重新判断。
   const lostBlobs = items.flatMap(item => (anchorsOf.get(item.id) ?? []).filter(anchor => !current.has(anchor.path) && anchor.postBlob).map(anchor => anchor.postBlob!));
   const renamed = lostBlobs.length ? await git.pathsWithBlob(gitRoot, lostBlobs) : new Map<string, string>();
@@ -43,6 +39,14 @@ export async function evaluate(repo: RepoRef, items: MemoryRow[], anchorsOf: Map
     result.set(item.id, { validity, changed });
   }
   return result;
+}
+
+/** 这些路径（相对 Git 顶层）在工作区里的当前 blob；已不存在的路径不在结果里。 */
+export async function currentBlobs(gitRoot: string, paths: string[]): Promise<Map<string, string>> {
+  const present = await Promise.all(paths.map(path => stat(posix.join(gitRoot.replaceAll('\\', '/'), path)).then(() => true, () => false)));
+  const existing = paths.filter((_, index) => present[index]);
+  const hashes = await git.hashFiles(gitRoot, existing);
+  return new Map(existing.map((path, index) => [path, hashes[index]]));
 }
 
 function judge(anchor: Anchor, now: string | undefined, renamed: Map<string, string>): AnchorResult {

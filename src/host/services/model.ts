@@ -104,7 +104,7 @@ export class ModelService {
     };
   }
 
-  // 只重发失败的那一次模型请求：失败的 assistant 消息从 Agent 状态与会话分支中移除，然后从原有记录继续，
+  // 只重发失败的那一次模型请求：失败的 assistant 消息从 Agent 状态与会话中移除，然后从原有记录继续，
   // 已完成的工具调用不会重放；取消随时生效，重试用尽后返回原来的错误。
   async promptWithRecovery(task: TaskState, runId: string, agent: KernelAgent, input: AgentMessage[]): Promise<RunEnd | undefined> {
     let ended = await this.promptOnce(agent, () => agent.prompt(input));
@@ -133,11 +133,7 @@ export class ModelService {
   private dropFailedAssistant(task: TaskState, agent: KernelAgent): void {
     const last = agent.state.messages.at(-1);
     if (last?.role === 'assistant') agent.state.messages = agent.state.messages.slice(0, -1);
-    const leaf = task.session.getLeafEntry();
-    if (leaf?.type === 'message' && leaf.message.role === 'assistant') {
-      if (leaf.parentId) task.session.branch(leaf.parentId);
-      else task.session.resetLeaf();
-    }
+    task.session.dropLastAssistant();
   }
 
   private async waitUnlessCancelled(ms: number): Promise<boolean> {

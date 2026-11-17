@@ -1,15 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import type { AgentMessage } from '@earendil-works/pi-agent-core';
-import { convertToLlm } from '@earendil-works/pi-coding-agent';
 import type { AppError } from '../../shared/contracts/index.js';
 import { CONTINUE_TEXT, IMPLEMENT_PLAN_TEXT, VERIFY_ONLY_TEXT } from '../../shared/constants.js';
 import { repositoryProfile } from '../engineering/navigation.js';
 import { budgetReport } from '../kernel/budget.js';
+import { toLlm } from '../kernel/context.js';
 import { createAgent, type KernelAgent } from '../kernel/index.js';
-import { injectSlots, reanchorSlots, tokensOf, type Slot } from '../memory/recall.js';
+import type { Slot } from '../memory/recall.js';
 import type { PermissionGate } from '../policy/permission-gate.js';
 import { classify } from '../tools/permission.js';
-import { compactIfNeeded, type CompactionOutcome } from '../runtime/compaction.js';
 import { repairDanglingToolCalls } from '../runtime/recovery.js';
 import * as delivery from '../workspace/delivery.js';
 import { readWorkspaceRules } from '../workspace/workspace.js';
@@ -17,7 +16,8 @@ import type { AgentEvents } from './agent-events.js';
 import type { DeliveryService } from './delivery.js';
 import type { MemoryService } from './memory.js';
 import type { ModelService } from './model.js';
-import { buildRecoveryBrief, modeStatement, stateBlock } from './prompts.js';
+import { buildRecoveryBrief, modeStatement } from './prompts.js';
+import { RequestAssembly } from './request-context.js';
 import type { TaskService } from './task-service.js';
 import { buildTools } from './toolset.js';
 import { failureHash, feedbackMessage, runVerification } from './verification.js';
@@ -125,53 +125,30 @@ export class RunController {
       const mutationsAtStart = new Map(task.mutations);
       const first = options.verifyOnly ? undefined : await this.firstPrompt(task, text, resumedFrom);
       let agent: KernelAgent | undefined;
-      // 召回的历史记忆只存在于这个数组里：随每次请求插入到锚点消息之前，从不写入 Pi 会话。
       const slots: Slot[] = [];
       if (first) {
         const anchor = first.at(-1) as Extract<AgentMessage, { role: 'user' }>;
         const recalled = await memory.recallSlot(task, runId, 'start', `${task.title} ${text}`);
         if (recalled) slots.push({ anchorTimestamp: anchor.timestamp, anchorText: text, text: recalled });
-        const streamFn = model.streamFn(profile!);
         const { parallelReadOnlyTools, maxParallelTools } = this.wb.policy.settings.kernel;
         const trusted = gate.trustedMcpNames();
+        const assembly = new RequestAssembly(this.wb, task, runId, slots, model.streamFn(profile!));
         agent = createAgent(this.wb.kernel, {
           scheduling: { parallel: parallelReadOnlyTools, maxParallel: maxParallelTools, isReadOnly: name => ['read', 'mcp_trusted'].includes(classify(name, trusted)) },
           initialState: {
             model: model.createModel(profile!),
-            messages: task.session.buildSessionContext().messages as AgentMessage[],
+            messages: assembly.messages(),
+            // 只含规则、模式与守则，跨 Run 不变，提供方的前缀缓存因此生效；会变的状态在尾部。
             systemPrompt: `${rules.text}
 
-${modeStatement(task, this.wb.policy)}
-
-${stateBlock(task, this.wb.profile?.vision)}`,
+${modeStatement(task, this.wb.policy)}`,
             tools,
           },
-          convertToLlm,
-          streamFn,
-          transformContext: async messages => injectSlots(messages, slots, slotText => userMessage(slotText)),
+          convertToLlm: toLlm,
+          streamFn: assembly.stream,
+          transformContext: assembly.transformContext,
           beforeToolCall: (context, signal) => gate.beforeToolCall(task, runId, context, signal),
-          prepareRequest: async (request, signal) => {
-            // 系统提示是对话记录开头的 system 消息，不在会话里；压缩后需要原样放回。
-            const leading = request.context.messages.filter(message => message.role === 'system');
-            const slotTokens = slots.reduce((sum, slot) => sum + tokensOf(slot.text), 0);
-            // system 消息除正文外还带 sections 与工具定义，按整条消息的 JSON 计数。
-            const force = this.wb.active?.id === runId && this.wb.active.forceCompaction === true;
-            if (force) this.wb.active!.forceCompaction = false;
-            let outcome: CompactionOutcome | undefined;
-            try {
-              outcome = await compactIfNeeded(task.session, request.model, this.wb.apiKey, streamFn, tokensOf(JSON.stringify(leading)) + slotTokens, this.wb.policy.settings.compaction, signal, force);
-            } catch (error) {
-              if (signal?.aborted) throw error;
-              // 摘要失败不终止 Run：本次请求不压缩照常发送；若因此以 length 停止，由 length 恢复路径处理。
-              this.recordCompactionFailure(task, runId, error);
-              return undefined;
-            }
-            if (!outcome) return undefined;
-            this.recordCompaction(task, runId, outcome);
-            const kept = task.session.buildSessionContext().messages as AgentMessage[];
-            reanchorSlots(slots, kept);
-            return { context: { ...request.context, messages: [...leading, ...kept] } };
-          },
+          prepareRequest: assembly.prepareRequest,
         });
         if (this.wb.active?.id === runId) this.wb.active.agent = agent;
         unsubscribe = agent.subscribe(event => events.onAgentEvent(task, runId, event));
@@ -268,20 +245,6 @@ ${stateBlock(task, this.wb.profile?.vision)}`,
     }
     tasks.save(task);
     this.wb.emitRun(task);
-    this.wb.emitSnapshot();
-  }
-
-  private recordCompaction(task: TaskState, runId: string, outcome: CompactionOutcome): void {
-    const usage = outcome.usage as { totalTokens?: number } | undefined;
-    this.wb.ledger.appendEvent(runId, 'compaction.done', { tokensBefore: outcome.tokensBefore, tokensAfter: outcome.tokensAfter, firstKeptEntryId: outcome.firstKeptEntryId, usage });
-    if (usage?.totalTokens) this.wb.ledger.appendEvent(runId, 'model.usage', { ...usage, purpose: 'compaction' });
-    task.timeline.push({ kind: 'notice', id: randomUUID(), text: '较早的对话已压缩为摘要' });
-    this.wb.emitSnapshot();
-  }
-
-  private recordCompactionFailure(task: TaskState, runId: string, error: unknown): void {
-    this.wb.ledger.appendEvent(runId, 'compaction.failed', { error: createError('COMPACTION_FAILED', '上下文压缩失败', error, this.wb.apiKey) });
-    task.timeline.push({ kind: 'notice', id: randomUUID(), text: '上下文压缩失败，本次请求不压缩继续' });
     this.wb.emitSnapshot();
   }
 }

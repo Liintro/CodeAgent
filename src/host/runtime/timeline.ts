@@ -1,11 +1,13 @@
-import type { SessionManager } from '@earendil-works/pi-coding-agent';
+import type { SessionStore } from '../kernel/session.js';
 import { FEEDBACK_PREFIX, RECOVERY_PREFIX } from '../../shared/constants.js';
 import type { MemoryShown, RootView, RunEvent, TimelineItem, ToolItem, ToolState, VerificationItem } from '../../shared/contracts/index.js';
 
 type Timed = { at: number; item: TimelineItem };
 
-// 时间线由 Pi 会话（说了什么）与账本事件（发生了什么）重建；不存在第二份对话副本。
-export function rebuildTimeline(session: SessionManager, events: RunEvent[], roots: RootView[]): TimelineItem[] {
+export const NOTICE = { compaction: '较早的对话已压缩为摘要', trim: '较早的工具输出已从上下文中省略' } as const;
+
+// 时间线由会话（说了什么）与账本事件（发生了什么）重建；不存在第二份对话副本。
+export function rebuildTimeline(session: SessionStore, events: RunEvent[], roots: RootView[]): TimelineItem[] {
   const requested = new Map<string, RunEvent>();
   const finished = new Map<string, RunEvent>();
   for (const event of events) {
@@ -14,20 +16,20 @@ export function rebuildTimeline(session: SessionManager, events: RunEvent[], roo
   }
   const items: Timed[] = [];
   const tools = new Map<string, ToolItem>();
-  for (const entry of session.getEntries()) {
-    if (entry.type === 'compaction') {
-      items.push({ at: Date.parse(entry.timestamp), item: { kind: 'notice', id: entry.id, text: '较早的对话已压缩为摘要' } });
+  for (const entry of session.entries()) {
+    const id = `${session.taskId}-${entry.seq}`;
+    if (entry.type !== 'message') {
+      items.push({ at: entry.at, item: { kind: 'notice', id, text: NOTICE[entry.type] } });
       continue;
     }
-    if (entry.type !== 'message') continue;
     const message = entry.message;
-    const at = typeof message.timestamp === 'number' ? message.timestamp : Date.parse(entry.timestamp);
+    const at = typeof message.timestamp === 'number' ? message.timestamp : entry.at;
     if (message.role === 'user') {
       const text = typeof message.content === 'string' ? message.content : message.content.filter(block => block.type === 'text').map(block => block.text).join('');
-      items.push({ at, item: { kind: 'message', id: entry.id, role: 'user', text, harness: text.startsWith(FEEDBACK_PREFIX) || text.startsWith(RECOVERY_PREFIX) || undefined } });
+      items.push({ at, item: { kind: 'message', id, role: 'user', text, harness: text.startsWith(FEEDBACK_PREFIX) || text.startsWith(RECOVERY_PREFIX) || undefined } });
     } else if (message.role === 'assistant') {
       const text = message.content.filter(block => block.type === 'text').map(block => block.text).join('');
-      if (text) items.push({ at, item: { kind: 'message', id: entry.id, role: 'assistant', text } });
+      if (text) items.push({ at, item: { kind: 'message', id, role: 'assistant', text } });
       for (const block of message.content) {
         if (block.type !== 'toolCall') continue;
         const request = requested.get(block.id);

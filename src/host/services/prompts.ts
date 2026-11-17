@@ -27,24 +27,6 @@ ${roots || '（未选择目录）'}
 ${policy.playbook}` : ''}`;
 }
 
-// 每个 Run 的系统提示末尾的状态块：压缩无法丢弃这些事实。
-export function stateBlock(task: TaskState, vision: boolean | undefined): string {
-  const lines = ['## 任务状态（由系统生成）'];
-  if (task.profile) lines.push(task.profile);
-  const commands = task.acceptance.commands.map(command => `- ${task.roots.find(root => root.id === command.rootId)?.alias ?? command.rootId}：${command.command}`);
-  lines.push(commands.length ? `验收命令（用户已确认，不得修改）：\n${commands.join('\n')}` : '验收命令：未设置');
-  if (task.documents.length) {
-    lines.push(`任务文档（只读；用 doc_outline 查看结构、doc_read 读取页或章节；实现与回答时按 【文档 p.N】 或 【文档 §章节】 引用依据${vision ? '；文本不足以确定的图、表、扫描页才用 doc_view 查看图像' : '；当前模型不支持图像输入，图片与扫描页的内容无法解读，遇到时如实说明'}）：`);
-    for (const doc of task.documents) lines.push(`- ${doc.name}（${doc.kind}，${doc.kind === 'pdf' ? `${doc.pages} 页` : `${doc.sections} 个章节`}${doc.noTextLayerPages.length ? `，第 ${doc.noTextLayerPages.join('、')} 页没有文本层` : ''}）`);
-  }
-  for (const entry of task.deliveryView?.roots ?? []) {
-    const last = entry.verification.map(result => `${result.label}${result.status === 'passed' ? '通过' : `未通过（退出码 ${result.exitCode ?? '无'}）`}`).join('、');
-    lines.push(`目录 ${entry.alias}：交付状态 ${entry.state}${last ? `；当前代码上的验证：${last}` : ''}`);
-    if (entry.files.length) lines.push(`  自任务起点以来变更的文件：${entry.files.slice(0, 50).map(file => `${file.status} ${file.path}`).join('；')}${entry.files.length > 50 ? ` 等共 ${entry.files.length} 个` : ''}`);
-  }
-  return lines.join('\n');
-}
-
 // 以真实的 Git/工作区状态为准，列出变更与结果未知的调用；不重放任何东西。
 export async function buildRecoveryBrief(wb: Workbench, deliveries: DeliveryService, task: TaskState, interruptedRunId: string): Promise<string> {
   const events = wb.ledger.events(interruptedRunId);

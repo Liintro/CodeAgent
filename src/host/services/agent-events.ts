@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
 import type { AgentEvent } from '@earendil-works/pi-agent-core';
-import type { SessionManager } from '@earendil-works/pi-coding-agent';
 import type { RootView, RunnerKind, TimelineItem, ToolItem } from '../../shared/contracts/index.js';
 import type { TaskState, Workbench } from './workbench.js';
 
@@ -15,7 +14,7 @@ export class AgentEvents {
 
   onAgentEvent(task: TaskState, runId: string, event: AgentEvent): void {
     if (event.type === 'message_end') {
-      task.session.appendMessage(event.message as Parameters<SessionManager['appendMessage']>[0]);
+      task.session.appendMessage(event.message);
       // Provider 没有返回 token 数时不记录。
       if (event.message.role === 'assistant' && event.message.usage?.totalTokens > 0) {
         this.wb.ledger.appendEvent(runId, 'model.usage', { ...event.message.usage });

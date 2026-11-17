@@ -1,4 +1,4 @@
-import type { SessionManager } from '@earendil-works/pi-coding-agent';
+import type { SessionStore } from '../kernel/session.js';
 import { RECOVERY_PREFIX } from '../../shared/constants.js';
 import type { FileChange, RunEvent } from '../../shared/contracts/index.js';
 
@@ -8,8 +8,8 @@ export type RootRecovery = { alias: string; sinceRun: FileChange[]; sinceBaselin
 const HOST_EXITED = 'Host 已意外退出，此工具调用的结果未知，它可能已部分或全部执行。请先检查当前文件与状态，再决定是否重复。';
 
 // 提供方会拒绝没有结果的 tool call；为中断时仍悬空的调用补一个明确的“结果未知”错误结果。
-export function repairDanglingToolCalls(session: SessionManager): number {
-  const entries = session.getBranch().filter(entry => entry.type === 'message');
+export function repairDanglingToolCalls(session: SessionStore): number {
+  const entries = session.entries().filter(entry => entry.type === 'message');
   const answered = new Set<string>();
   for (const entry of entries) if (entry.message.role === 'toolResult') answered.add(entry.message.toolCallId);
   let repaired = 0;
