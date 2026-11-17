@@ -16,12 +16,12 @@
     "copy:resources": "node scripts/copy-resources.mjs",
     "build": "npm run build:node && npm run build:preload && npm run build:renderer && npm run copy:resources",
     "typecheck": "tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.preload.json --noEmit && tsc -p tsconfig.renderer.json",
-    "test": "node --test --test-concurrency=1 --test-timeout=120000 tests/integration/*.test.mjs",
-    "test:desktop": "node --test --test-concurrency=1 --test-timeout=120000 tests/desktop/*.test.mjs",
-    "test:live": "node --test --test-concurrency=1 --test-timeout=300000 tests/live/*.test.mjs",
+    "test": "node --test --test-concurrency=1 --test-timeout=120000 ../codeAgent-workspace/tests/integration/*.test.mjs",
+    "test:desktop": "node --test --test-concurrency=1 --test-timeout=120000 ../codeAgent-workspace/tests/desktop/*.test.mjs",
+    "test:live": "node --test --test-concurrency=1 --test-timeout=300000 ../codeAgent-workspace/tests/live/*.test.mjs",
     "pack:win": "npm run build && electron-builder --win --x64 --dir",
-    "test:package": "node --test --test-concurrency=1 --test-timeout=300000 tests/package/*.test.mjs",
-    "test:unit": "node --test tests/unit/*.test.mjs",
+    "test:package": "node --test --test-concurrency=1 --test-timeout=300000 ../codeAgent-workspace/tests/package/*.test.mjs",
+    "test:unit": "node --test ../codeAgent-workspace/tests/unit/*.test.mjs",
     "pack:win:release": "npm run build && electron-builder --win nsis zip --x64 --publish never"
   },
   "dependencies": {
