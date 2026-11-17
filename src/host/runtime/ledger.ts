@@ -90,6 +90,8 @@ const MIGRATIONS = [`
   CREATE TABLE session_entry (
     task_id TEXT NOT NULL REFERENCES task(id), seq INTEGER NOT NULL, type TEXT NOT NULL, at INTEGER NOT NULL, data_json TEXT NOT NULL,
     PRIMARY KEY (task_id, seq));
+`, `
+  ALTER TABLE memory_use ADD COLUMN outcome TEXT;
 `];
 
 // 只记录事实（发生了什么）；对话内容在 session_entry 表里，由 kernel/session.ts 读写。

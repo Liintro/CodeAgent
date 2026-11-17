@@ -45,6 +45,7 @@ export class DeliveryService {
     const task = this.wb.requireTask();
     const root = task.roots.find(item => item.id === rootId);
     const rejected = root && this.wb.memory.rejectTask(task.id, (await repoOf(root)).id);
+    this.memory.markRejected(task);
     const last = this.wb.ledger.lastRun(task.id);
     if (rejected && last) this.wb.ledger.appendEvent(last.id, 'memory.changed', { action: 'rejected_by_restore', count: rejected, rootId });
     return result;

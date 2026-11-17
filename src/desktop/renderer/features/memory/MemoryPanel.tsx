@@ -59,6 +59,7 @@ export function MemoryPanel() {
             <div className="flex flex-wrap items-center gap-1.5">
               <Badge>{kindText[item.kind]}</Badge>
               <Badge tone={item.status === 'rejected' ? 'danger' : item.validity === 'current' ? 'success' : 'warning'}>{item.status === 'rejected' ? '已标记错误' : validityText[item.validity]}</Badge>
+              {pending(item) && <Badge tone="warning">待确认</Badge>}
               <span className="min-w-0 truncate text-[11px] text-subtle">{item.repoLabel}{item.taskTitle ? ` · ${item.taskTitle}` : ''} · {new Date(item.updatedAt).toLocaleDateString('zh-CN')}</span>
             </div>
             {editing === item.id ? (
@@ -75,6 +76,7 @@ export function MemoryPanel() {
                 <div className="mt-2 flex gap-1.5">
                   {item.status === 'active' ? (
                     <>
+                      {pending(item) && <Button size="xs" onClick={() => change({ id: item.id, action: 'confirm' })}>确认</Button>}
                       <Button variant="outline" size="xs" onClick={() => { setEditing(item.id); setDraft(item.text); }}>编辑</Button>
                       <Button variant="outline" size="xs" onClick={() => change({ id: item.id, action: 'reject' })}>标记错误</Button>
                     </>
@@ -91,6 +93,9 @@ export function MemoryPanel() {
     </div>
   );
 }
+
+// 教训由系统推断或摘自用户的一句话，确认之前不一定可信。
+const pending = (item: MemoryItemView) => item.kind === 'lesson' && item.status === 'active' && !item.confirmed;
 
 export function MemorySwitch({ enabled, disabled }: { enabled: boolean; disabled: boolean }) {
   return (

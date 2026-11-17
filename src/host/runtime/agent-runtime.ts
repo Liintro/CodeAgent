@@ -56,7 +56,7 @@ export class AgentRuntime {
     this.tasks = new TaskService(this.wb, task => this.deliveries.restoreViews(task));
     this.memory = new MemoryService(this.wb);
     this.deliveries = new DeliveryService(this.wb, this.tasks, this.memory);
-    this.gate = new PermissionGate(this.wb, this.tasks);
+    this.gate = new PermissionGate(this.wb, this.tasks, this.memory);
     this.model = new ModelService(this.wb);
     this.runs = new RunController(this.wb, rulesPath, {
       tasks: this.tasks, deliveries: this.deliveries, memory: this.memory, gate: this.gate, events: new AgentEvents(this.wb), model: this.model,
@@ -200,8 +200,8 @@ export class AgentRuntime {
     this.runs.cancelRun(runId);
   }
 
-  decideApproval(approvalId: string, decision: ApprovalDecision): void {
-    this.gate.decideApproval(approvalId, decision);
+  decideApproval(approvalId: string, decision: ApprovalDecision, reason?: string): void {
+    this.gate.decideApproval(approvalId, decision, reason);
   }
 
   // ---- 记忆 ----

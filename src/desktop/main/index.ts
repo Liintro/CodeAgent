@@ -427,9 +427,10 @@ handle<void>('desktop:cancelRun', async (runId: unknown) => {
   if (typeof runId !== 'string') throw new Error('执行标识无效');
   return hostRequest<void>({ type: 'cancelRun', runId });
 });
-handle<void>('desktop:decideApproval', async (approvalId: unknown, decision: unknown) => {
+handle<void>('desktop:decideApproval', async (approvalId: unknown, decision: unknown, reason: unknown) => {
   if (typeof approvalId !== 'string' || !DECISIONS.includes(decision as ApprovalDecision)) throw new Error('审批请求无效');
-  return hostRequest<void>({ type: 'decideApproval', approvalId, decision: decision as ApprovalDecision });
+  if (reason !== undefined && typeof reason !== 'string') throw new Error('拒绝原因无效');
+  return hostRequest<void>({ type: 'decideApproval', approvalId, decision: decision as ApprovalDecision, reason: decision === 'deny' && reason?.trim() ? reason.trim().slice(0, 500) : undefined });
 });
 handle<void>('desktop:newTask', async () => {
   await assertIdle();
@@ -485,10 +486,10 @@ handle<DeliveryActionResult>('desktop:commitRoot', async (rootId: unknown, messa
 handle<MemoryItemView[]>('desktop:listMemory', async () => hostRequest<MemoryItemView[]>({ type: 'listMemory' }, 60000));
 handle<void>('desktop:changeMemory', async (change: unknown) => {
   const value = change as Partial<MemoryChange> | undefined;
-  if (typeof value?.id !== 'string' || !['reject', 'restore', 'delete', 'edit'].includes(value.action ?? '')) throw new Error('记忆操作无效');
+  if (typeof value?.id !== 'string' || !['confirm', 'reject', 'restore', 'delete', 'edit'].includes(value.action ?? '')) throw new Error('记忆操作无效');
   if (value.action === 'edit' && (typeof value.text !== 'string' || !value.text.trim())) throw new Error('记忆内容不能为空');
   if (value.action === 'delete' && !await confirm('删除这条记忆？', '删除后无法恢复，Agent 之后也不会再看到它。', '删除')) return { ok: true, value: undefined };
-  return hostRequest<void>({ type: 'changeMemory', change: value.action === 'edit' ? { id: value.id, action: 'edit', text: value.text!.trim() } : { id: value.id, action: value.action as 'reject' | 'restore' | 'delete' } });
+  return hostRequest<void>({ type: 'changeMemory', change: value.action === 'edit' ? { id: value.id, action: 'edit', text: value.text!.trim() } : { id: value.id, action: value.action as 'confirm' | 'reject' | 'restore' | 'delete' } });
 });
 handle<void>('desktop:addMemoryNote', async (text: unknown) => {
   if (typeof text !== 'string' || !text.trim()) throw new Error('备注内容不能为空');

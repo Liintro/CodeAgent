@@ -151,7 +151,7 @@ async function fixItem(base: Base, repo: RepoRef, failed: VerificationResult, fi
   };
 }
 
-function failureLines(outputTail: string): string[] {
+export function failureLines(outputTail: string): string[] {
   const noise = /^\[(INFO|ERROR)\]\s*(Failures:|Errors:|Tests run:|BUILD|Failed to execute|-> \[Help|To see|Re-run|For more|\s*$)/;
   return scrub(outputTail).split(/\r?\n/).map(line => line.trim()).filter(line => /error|fail|expected|assert|exception/i.test(line) && !noise.test(line))
     .slice(0, FAILURE_LINES).map(line => line.slice(0, FAILURE_LINE_LIMIT));

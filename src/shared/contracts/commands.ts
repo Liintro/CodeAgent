@@ -21,7 +21,8 @@ export interface DesktopBridge {
   startMessage(text: string): Promise<Reply<{ runId: string }>>;
   implementPlan(): Promise<Reply<{ runId: string }>>;
   cancelRun(runId: string): Promise<Reply<void>>;
-  decideApproval(approvalId: string, decision: ApprovalDecision): Promise<Reply<void>>;
+  /** reason：拒绝时用户填写的原因（可选），记成一条待确认的教训。 */
+  decideApproval(approvalId: string, decision: ApprovalDecision, reason?: string): Promise<Reply<void>>;
   newTask(): Promise<Reply<void>>;
   selectTask(taskId: string): Promise<Reply<void>>;
   renameTask(taskId: string, title: string): Promise<Reply<void>>;
@@ -68,7 +69,7 @@ export type HostCommand =
   | { type: 'startMessage'; text: string }
   | { type: 'implementPlan' }
   | { type: 'cancelRun'; runId: string }
-  | { type: 'decideApproval'; approvalId: string; decision: ApprovalDecision }
+  | { type: 'decideApproval'; approvalId: string; decision: ApprovalDecision; reason?: string }
   | { type: 'getChanges' }
   | { type: 'getDiff'; rootId: string; path: string }
   | { type: 'detectAcceptance' }

@@ -1,13 +1,13 @@
 import type { SessionStore } from '../kernel/session.js';
 import { FEEDBACK_PREFIX, RECOVERY_PREFIX } from '../../shared/constants.js';
-import type { MemoryShown, RootView, RunEvent, TimelineItem, ToolItem, ToolState, VerificationItem } from '../../shared/contracts/index.js';
+import type { MemoryOutcome, MemoryShown, RootView, RunEvent, TimelineItem, ToolItem, ToolState, VerificationItem } from '../../shared/contracts/index.js';
 
 type Timed = { at: number; item: TimelineItem };
 
 export const NOTICE = { compaction: '较早的对话已压缩为摘要', trim: '较早的工具输出已从上下文中省略' } as const;
 
 // 时间线由会话（说了什么）与账本事件（发生了什么）重建；不存在第二份对话副本。
-export function rebuildTimeline(session: SessionStore, events: RunEvent[], roots: RootView[]): TimelineItem[] {
+export function rebuildTimeline(session: SessionStore, events: RunEvent[], roots: RootView[], outcomes: Map<string, MemoryOutcome> = new Map()): TimelineItem[] {
   const requested = new Map<string, RunEvent>();
   const finished = new Map<string, RunEvent>();
   for (const event of events) {
@@ -59,7 +59,7 @@ export function rebuildTimeline(session: SessionStore, events: RunEvent[], roots
   }
   for (const event of events) {
     if (event.type === 'memory.recalled' && Array.isArray(event.data.shown) && event.data.shown.length) {
-      items.push({ at: event.at, item: { kind: 'memory', id: `${event.runId}-${event.seq}`, items: event.data.shown as MemoryShown[] } });
+      items.push({ at: event.at, item: { kind: 'memory', id: `${event.runId}-${event.seq}`, runId: event.runId, items: event.data.shown as MemoryShown[], outcome: outcomes.get(event.runId) } });
     }
     if (event.type !== 'verification.finished') continue;
     const data = event.data;

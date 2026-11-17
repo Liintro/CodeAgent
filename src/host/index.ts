@@ -80,7 +80,7 @@ process.parentPort?.on('message', async ({ data }: { data: HostRequest }) => {
           reply = ok(runtime.cancelRun(command.runId));
           break;
         case 'decideApproval':
-          reply = ok(runtime.decideApproval(command.approvalId, command.decision));
+          reply = ok(runtime.decideApproval(command.approvalId, command.decision, command.reason));
           break;
         case 'getChanges':
           reply = ok(await runtime.getChanges());

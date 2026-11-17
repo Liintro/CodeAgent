@@ -1,5 +1,5 @@
 import type {
-  Delivery, MemoryKind, MemoryValidity, McpServerStatus, RootDeliveryState, RunPhase, ToolState, UserMode, VerificationState,
+  Delivery, MemoryKind, MemoryOutcome, MemoryValidity, McpServerStatus, RootDeliveryState, RunPhase, ToolState, UserMode, VerificationState,
 } from '../../../shared/contracts';
 
 // 所有界面文案集中在这里，组件只引用键值。
@@ -19,7 +19,7 @@ export const verificationText: Record<VerificationState, string> = {
 export const toolTitles: Record<string, string> = {
   read: '读取文件', grep: '搜索内容', find: '查找文件', ls: '列出目录', edit: '编辑文件', write: '写入文件', powershell: 'PowerShell', git: 'Git 查询',
   doc_outline: '文档结构', doc_read: '读取文档', doc_view: '查看文档图像', code_outline: '代码结构', find_symbol: '查找定义', related_files: '相关文件',
-  web_search: '联网搜索', web_fetch: '读取网页',
+  web_search: '联网搜索', web_fetch: '读取网页', memory_search: '查询记忆',
 };
 
 export const runPhaseText: Record<RunPhase, string> = {
@@ -34,7 +34,8 @@ export const modes: { value: UserMode; label: string; hint: string }[] = [
   { value: 'bypass', label: '绕过权限', hint: '不再询问，以当前用户权限运行' },
 ];
 
-export const kindText: Record<MemoryKind, string> = { fix: '修复', change: '变更', convention: '约定', note: '备注' };
+export const kindText: Record<MemoryKind, string> = { fix: '修复', change: '变更', convention: '约定', note: '备注', lesson: '教训' };
+export const outcomeText: Record<MemoryOutcome, string> = { passed: '之后验证通过', failed: '之后仍未通过', rejected: '结果已被还原' };
 export const validityText: Record<MemoryValidity, string> = { current: '当前', drifted: '已漂移', reverted: '已回退', not_in_history: '不在当前历史', unverifiable: '无法校验' };
 export const mcpStateText: Record<McpServerStatus['state'], string> = { disabled: '已停用', connecting: '连接中', ready: '就绪', failed: '失败' };
 

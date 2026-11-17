@@ -113,7 +113,8 @@ export type MemoryShown = { id: string; kind: MemoryKind; validity: MemoryValidi
 export type TimelineItem =
   | { kind: 'message'; id: string; role: 'user' | 'assistant'; text: string; harness?: boolean }
   | { kind: 'notice'; id: string; text: string }
-  | { kind: 'memory'; id: string; items: MemoryShown[] }
+  /** outcome：这次 Run 之后记忆是否起了作用（验证通过、仍未通过、结果被用户还原）；Run 未结束或无从判断时为空。 */
+  | { kind: 'memory'; id: string; runId: string; items: MemoryShown[]; outcome?: MemoryOutcome }
   | VerificationItem
   | ToolItem;
 
@@ -202,7 +203,8 @@ export type RootDelivery = {
 export type DeliveryView = { taskId: string; state: Delivery; roots: RootDelivery[] };
 export type DeliveryActionResult = { rootId: string; skipped: string[]; commitSha?: string };
 
-export type MemoryKind = 'change' | 'fix' | 'convention' | 'note';
+export type MemoryKind = 'change' | 'fix' | 'convention' | 'note' | 'lesson';
+export type MemoryOutcome = 'passed' | 'failed' | 'rejected';
 export type MemoryValidity = 'current' | 'drifted' | 'reverted' | 'not_in_history' | 'unverifiable';
 
 export type MemoryItemView = {
@@ -219,7 +221,7 @@ export type MemoryItemView = {
   validity: MemoryValidity;
   updatedAt: number;
 };
-export type MemoryChange = { id: string; action: 'reject' | 'restore' | 'delete' } | { id: string; action: 'edit'; text: string };
+export type MemoryChange = { id: string; action: 'confirm' | 'reject' | 'restore' | 'delete' } | { id: string; action: 'edit'; text: string };
 
 /** 联网搜索的可见配置（不含密钥本体）；enabled=false 时工具不存在。 */
 export type WebSearchView = { enabled: boolean; searchUrl?: string; apiKeyHeader?: string; hasApiKey: boolean };

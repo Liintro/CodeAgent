@@ -1,7 +1,7 @@
 import { basename, extname } from 'node:path';
 import type { MemoryKind, MemoryValidity, RootView } from '../../shared/contracts/index.js';
 import { repoOf, type RepoRef } from './repo.js';
-import type { Anchor, MemoryRow, MemoryStore } from './store.js';
+import type { Anchor, Effect, MemoryRow, MemoryStore } from './store.js';
 import type { RecallSettings } from '../runtime/policy.js';
 import { driftNote, evaluate, type Evaluation } from './validity.js';
 import { tokensOf } from '../kernel/tokens.js';
@@ -23,6 +23,8 @@ export type RecallRequest = {
   contextWindow: number;
   /** 修复阶段：只召回同一失败的历史修复。 */
   failure?: Failure;
+  /** 当前 Run：它自己的结果还不算进记忆的效果。 */
+  runId?: string;
 };
 
 // ---- 查询 ----
@@ -59,7 +61,9 @@ function relevance(settings: RecallSettings, item: MemoryRow, anchors: Anchor[],
   const phrase = sharedGrams >= settings.minPhraseGrams ? Math.min(1, sharedGrams / settings.phraseFull) : 0;
   const failureMatch = Boolean(failure && item.kind === 'fix' && (item.evidence.failureHash === failure.hash || failureOverlap(item, failure)));
   const w = settings.weights;
-  return { relevance: w.path * Number(pathHit) + w.failure * Number(failureMatch) + w.identifier * identifier + w.phrase * phrase, failureMatch };
+  const value = w.path * Number(pathHit) + w.failure * Number(failureMatch) + w.identifier * identifier + w.phrase * phrase;
+  // “变更”记忆只说明某次改了哪些文件，信息量低：路径没命中时降权，只有足够相关才占召回名额。
+  return { relevance: item.kind === 'change' && !pathHit ? value * settings.changeWeight : value, failureMatch };
 }
 
 const isSpecific = (id: string) => /[a-z][A-Z]|_|\d/.test(id) || id.length >= 10;
@@ -72,27 +76,23 @@ function failureOverlap(item: MemoryRow, failure: Failure): boolean {
 // ---- 召回 ----
 
 export async function recall(store: MemoryStore, request: RecallRequest, settings: RecallSettings): Promise<Recalled> {
-  const repos = new Map<string, RepoRef>();
-  for (const root of request.roots) {
-    const repo = await repoOf(root);
-    if (!repos.has(repo.id)) repos.set(repo.id, repo);
-  }
   const query = parseQuery(request.failure ? `${request.query} ${request.failure.outputTail}` : request.query);
-  const candidates = store.search([...repos.keys()], ftsQueryOf(query, request.changedPaths, settings.maxQueryTerms), settings.candidates)
-    .filter(item => !request.failure || item.kind === 'fix');
+  const { repos, candidates: found, anchors, evaluations } = await candidatesFor(store, request.roots, ftsQueryOf(query, request.changedPaths, settings.maxQueryTerms), settings.candidates);
+  const candidates = found.filter(item => !request.failure || item.kind === 'fix');
   if (!candidates.length) return { text: '', tokens: 0, items: [] };
-  const anchors = store.anchors(candidates.map(item => item.id));
-  const evaluations = new Map<string, Evaluation>();
-  for (const [id, repo] of repos) for (const [key, value] of await evaluate(repo, candidates.filter(item => item.repoId === id), anchors)) evaluations.set(key, value);
 
   const w = settings.weights;
   const now = Date.now();
+  const effects = store.effects(candidates.map(item => item.id), request.runId);
   const scored = candidates.map((item, index) => {
     const { relevance: rel, failureMatch } = relevance(settings, item, anchors.get(item.id) ?? [], query, request.changedPaths, request.failure);
     const evaluation = evaluations.get(item.id)!;
-    const usable = evaluation.validity === 'current' || (evaluation.validity === 'drifted' && rel >= settings.driftedMinRelevance)
-      || (evaluation.validity === 'unverifiable' && item.confirmed);
-    const base = rel > 0 ? rel + w.confirmed * Number(item.confirmed) + w.recency * Math.exp(-(now - item.updatedAt) / (30 * 86400000)) + w.rank * (1 - index / candidates.length) : 0;
+    // 待确认的教训只有锚定了文件（能用 Git 校验）时才召回；摘自用户一句话的教训要等用户确认。
+    const unconfirmedClaim = item.kind === 'lesson' && !item.confirmed && !(anchors.get(item.id) ?? []).length;
+    const usable = !unconfirmedClaim && (evaluation.validity === 'current' || (evaluation.validity === 'drifted' && rel >= settings.driftedMinRelevance)
+      || (evaluation.validity === 'unverifiable' && item.confirmed));
+    const base = rel > 0 ? rel + w.confirmed * Number(item.confirmed) + w.recency * Math.exp(-(now - item.updatedAt) / (30 * 86400000)) + w.rank * (1 - index / candidates.length)
+      + effectScore(effects.get(item.id), settings) : 0;
     const score = usable ? base * (evaluation.validity === 'drifted' ? settings.driftedWeight : 1) : 0;
     return { item, evaluation, score, failureMatch };
   });
@@ -115,11 +115,56 @@ export async function recall(store: MemoryStore, request: RecallRequest, setting
   return chosen.length ? { text: [header, ...chosen.map(({ line }) => line)].join('\n'), tokens, items } : { text: '', tokens: 0, items };
 }
 
-const KIND_LABEL: Record<MemoryKind, string> = { fix: '修复', change: '变更', convention: '约定', note: '备注' };
+export type SearchRequest = { roots: RootView[]; path?: string; identifier?: string; failure?: string; runId?: string };
+
+/**
+ * memory_search：按路径、标识符或失败信息查记忆，返回带有效性状态的条目（不论是否仍然有效，由模型自行判断）。
+ * 与召回共用候选检索、相关性与效果加权，但没有 token 预算，也不按有效性过滤。
+ */
+export async function search(store: MemoryStore, request: SearchRequest, settings: RecallSettings): Promise<Recalled> {
+  const query = parseQuery([request.path, request.identifier, request.failure].filter(Boolean).join(' '));
+  const { repos, candidates, anchors, evaluations } = await candidatesFor(store, request.roots, ftsQueryOf(query, [], settings.maxQueryTerms), settings.candidates);
+  const failure = request.failure ? { hash: '', outputTail: request.failure } : undefined;
+  const effects = store.effects(candidates.map(item => item.id), request.runId);
+  const ranked = candidates.map((item, index) => ({ item, score: relevance(settings, item, anchors.get(item.id) ?? [], query, [], failure).relevance + effectScore(effects.get(item.id), settings) + settings.weights.rank * (1 - index / candidates.length) }))
+    .sort((a, b) => b.score - a.score).slice(0, settings.searchLimit);
+  if (!ranked.length) return { text: '没有找到相关记忆。', tokens: 0, items: [] };
+  const lines = await Promise.all(ranked.map(async ({ item }, index) => {
+    const paths = (anchors.get(item.id) ?? []).map(anchor => anchor.path);
+    return `${await render(index + 1, item, evaluations.get(item.id)!, repos.get(item.repoId)!)}${paths.length ? `\n   涉及文件：${paths.slice(0, 8).join('、')}${paths.length > 8 ? ' 等' : ''}` : ''}`;
+  }));
+  const text = ['[记忆检索结果·仅供参考，一切以当前代码为准；有效性按当前工作区判断]', ...lines].join('\n');
+  return { text, tokens: tokensOf(text), items: ranked.map(({ item, score }) => ({ id: item.id, kind: item.kind, validity: evaluations.get(item.id)!.validity, score: Number(score.toFixed(3)), injected: true, tokens: 0 })) };
+}
+
+// FTS 候选，以及它们的锚点与在当前工作区上的有效性。
+async function candidatesFor(store: MemoryStore, roots: RootView[], ftsQuery: string, limit: number) {
+  const repos = new Map<string, RepoRef>();
+  for (const root of roots) {
+    const repo = await repoOf(root);
+    if (!repos.has(repo.id)) repos.set(repo.id, repo);
+  }
+  const candidates = store.search([...repos.keys()], ftsQuery, limit);
+  const anchors = store.anchors(candidates.map(item => item.id));
+  const evaluations = new Map<string, Evaluation>();
+  for (const [id, repo] of repos) for (const [key, value] of await evaluate(repo, candidates.filter(item => item.repoId === id), anchors)) evaluations.set(key, value);
+  return { repos, candidates, anchors, evaluations };
+}
+
+/** 用过这条记忆的 Run 通过了就加权，仍未通过或被用户还原就降权；总量限制在 ±effectCap 之内。 */
+export function effectScore(effect: Effect | undefined, settings: RecallSettings): number {
+  if (!effect) return 0;
+  const raw = settings.weights.success * effect.passed - settings.weights.unsuccessful * (effect.failed + effect.rejected);
+  return Math.max(-settings.effectCap, Math.min(settings.effectCap, raw));
+}
+
+const KIND_LABEL: Record<MemoryKind, string> = { fix: '修复', change: '变更', convention: '约定', note: '备注', lesson: '教训' };
+const VALIDITY_LABEL: Record<MemoryValidity, string> = { current: '当前有效', drifted: '已漂移', reverted: '相关改动已被还原', not_in_history: '不在当前分支的历史中', unverifiable: '无法用 Git 校验' };
 
 async function render(index: number, item: MemoryRow, evaluation: Evaluation, repo: RepoRef, excerptChars?: number): Promise<string> {
   const date = new Date(item.updatedAt).toISOString().slice(0, 10);
-  const state = evaluation.validity === 'drifted' ? `已漂移（${await driftNote(repo, item, evaluation.changed)}）` : evaluation.validity === 'unverifiable' ? '无法用 Git 校验' : '当前有效';
+  const state = (evaluation.validity === 'drifted' ? `已漂移（${await driftNote(repo, item, evaluation.changed)}）` : VALIDITY_LABEL[evaluation.validity])
+    + (item.kind === 'lesson' && !item.confirmed ? '，用户尚未确认' : '');
   // 只有修复召回带差异摘录。
   const excerpt = excerptChars !== undefined && typeof item.evidence.fixExcerpt === 'string' ? `\n   修复差异：\n${indent(item.evidence.fixExcerpt.slice(0, excerptChars))}` : '';
   return `${index}. ${KIND_LABEL[item.kind]}｜${state}｜${date}｜${item.repoLabel}\n   ${item.text}${excerpt}`;

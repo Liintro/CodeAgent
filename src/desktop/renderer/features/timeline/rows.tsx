@@ -5,7 +5,7 @@ import {
 import type { TimelineItem, ToolItem, VerificationItem } from '../../../../shared/contracts';
 import { Badge } from '@/components/ui/misc';
 import { cn, formatDuration } from '@/lib/utils';
-import { kindText, toolStateText, toolTitles, validityText, verificationText } from '@/i18n/zh';
+import { kindText, outcomeText, toolStateText, toolTitles, validityText, verificationText } from '@/i18n/zh';
 import { useView } from '@/store/snapshot';
 import { useUi } from '@/store/ui';
 import { exploreSummary } from './group';
@@ -40,7 +40,7 @@ export function NoticeRow({ text }: { text: string }) {
 
 export function MemoryRow({ item }: { item: Extract<TimelineItem, { kind: 'memory' }> }) {
   return (
-    <Collapsible testId="memory-note" icon={<BookOpen />} title={`已引用 ${item.items.length} 条记忆`}>
+    <Collapsible testId="memory-note" icon={<BookOpen />} title={`已引用 ${item.items.length} 条记忆${item.outcome ? ` · ${outcomeText[item.outcome]}` : ''}`}>
       <ul className="flex flex-col gap-1.5">
         {item.items.map(entry => (
           <li key={entry.id} className="flex flex-wrap items-baseline gap-1.5 text-xs">

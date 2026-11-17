@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, CheckCircle2, CircleStop, Loader2, RotateCw, ShieldAlert, ShieldCheck, XCircle } from 'lucide-react';
 import type { ApprovalDecision, ApprovalRequest } from '../../../../shared/contracts';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Kbd } from '@/components/ui/kbd';
 import { bridge, call } from '@/lib/bridge';
 import { cn, formatDuration } from '@/lib/utils';
@@ -37,10 +38,11 @@ function HostFailed() {
 function ApprovalCard({ approval }: { approval: ApprovalRequest }) {
   const card = useRef<HTMLElement>(null);
   const [busy, setBusy] = useState(false);
+  const [reason, setReason] = useState('');
   const decide = async (decision: ApprovalDecision) => {
     if (busy) return;
     setBusy(true);
-    await call(bridge().decideApproval(approval.id, decision));
+    await call(bridge().decideApproval(approval.id, decision, decision === 'deny' && reason.trim() ? reason.trim() : undefined));
     setBusy(false);
   };
 
@@ -95,6 +97,8 @@ function ApprovalCard({ approval }: { approval: ApprovalRequest }) {
         )}
       </div>
       <div className="flex items-center justify-end gap-2 border-t border-border px-3.5 py-2">
+        <Input aria-label="拒绝原因" placeholder="拒绝原因（可选）" value={reason} onChange={event => setReason(event.target.value)}
+          onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); decide('deny'); } }} className="h-8 min-w-0 flex-1 text-xs" />
         <Button variant="outline" size="sm" disabled={busy} onClick={() => decide('deny')}>拒绝 <Kbd aria-hidden="true">Esc</Kbd></Button>
         {approval.grantKey && <Button variant="outline" size="sm" disabled={busy} onClick={() => decide('allow_task')}>允许本任务 <Kbd aria-hidden="true">Ctrl ⏎</Kbd></Button>}
         <Button size="sm" disabled={busy} onClick={() => decide('allow')}>允许本次 <Kbd aria-hidden="true">⏎</Kbd></Button>
