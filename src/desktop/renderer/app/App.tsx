@@ -6,6 +6,7 @@ import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { bridge, call } from '@/lib/bridge';
 import { Composer } from '@/features/composer/Composer';
+import { PlanPanel } from '@/features/plan/PlanPanel';
 import { Dock } from '@/features/dock/Dock';
 import { notifyAttention, notifyError } from '@/features/notifications/notify';
 import { CommandPalette } from '@/features/palette/CommandPalette';
@@ -71,6 +72,7 @@ function Workbench() {
   return (
     <>
       {empty ? <StartScreen /> : <Timeline />}
+      <PlanPanel />
       <Dock />
       <Composer />
     </>

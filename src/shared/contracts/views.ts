@@ -109,6 +109,8 @@ export type VerificationItem = {
   logFile?: string;
   failure?: ParsedFailure;
 };
+/** update_plan 维护的任务计划，固定显示在输入框上方。 */
+export type PlanItem = { content: string; status: 'pending' | 'in_progress' | 'completed' };
 export type MemoryShown = { id: string; kind: MemoryKind; validity: MemoryValidity; repoLabel: string; text: string };
 export type TimelineItem =
   | { kind: 'message'; id: string; role: 'user' | 'assistant'; text: string; harness?: boolean }
@@ -247,6 +249,7 @@ export type WorkbenchSnapshot = {
   memoryEnabled: boolean;
   webSearch: WebSearchView;
   documents: DocumentView[];
+  plan: PlanItem[];
 };
 
 /** 桌面端偏好：主题与各级系统通知开关（只在主进程与渲染层之间使用，不交给 Host）。 */

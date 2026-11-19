@@ -6,6 +6,7 @@ import { SessionStore } from '../kernel/session.js';
 import type { TaskRecord } from '../runtime/ledger.js';
 import { rebuildTimeline } from '../runtime/timeline.js';
 import { permissionFor } from '../tools/permission.js';
+import { currentPlan } from '../tools/plan-tool.js';
 import * as git from '../workspace/git.js';
 import { openRoot } from '../workspace/workspace.js';
 import { documentView, type TaskState, type Workbench } from './workbench.js';
@@ -220,7 +221,7 @@ export class TaskService {
       roots: record.roots.map((root, index) => ({ id: root.id, alias: root.alias, path: root.path, primary: index === 0, sandboxGranted: false })),
       documents: this.wb.ledger.documents(record.id),
       permission: permissionFor(record.userMode, record.grants), acceptance: record.acceptance, delivery: record.delivery, mutations,
-      interrupted: last?.phase === 'interrupted', loaded: false, session: undefined as never, timeline: [],
+      interrupted: last?.phase === 'interrupted', loaded: false, session: undefined as never, timeline: [], plan: [],
       run: last && { id: last.id, taskId: record.id, phase: last.phase, toolErrors: false },
     };
   }
@@ -232,6 +233,7 @@ export class TaskService {
     const events = this.wb.ledger.taskEvents(task.id, 'tool.requested', 'tool.finished', 'verification.finished', 'memory.recalled');
     const memoryRuns = [...new Set(events.filter(event => event.type === 'memory.recalled').map(event => event.runId))];
     task.timeline = rebuildTimeline(task.session, events, task.roots, this.wb.memory.runOutcomes(memoryRuns));
+    task.plan = currentPlan(task.session);
     task.loaded = true;
   }
 
@@ -253,7 +255,7 @@ export class TaskService {
     const task: TaskState = {
       id: randomUUID(), title: '新任务', createdAt: Date.now(), updatedAt: Date.now(), roots, documents: [], permission: permissionFor('manual'),
       acceptance: { commands: [], maxRepairs: this.wb.policy.settings.repair.defaultMaxRepairs }, delivery: 'none', mutations: new Map(), interrupted: false, loaded: true,
-      session: undefined as never, timeline: [],
+      session: undefined as never, timeline: [], plan: [],
     };
     task.session = this.openSession(task);
     this.wb.tasks.push(task);

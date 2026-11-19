@@ -12,6 +12,7 @@ import type {
   ModelInput,
   ModelProfile,
   PermissionSetting,
+  PlanItem,
   RootView,
   RunnerKind,
   RunPhase,
@@ -54,6 +55,8 @@ export type TaskState = {
   loaded: boolean;
   session: SessionStore;
   timeline: TimelineItem[];
+  /** update_plan 的最新结果；载入任务时从会话恢复。 */
+  plan: PlanItem[];
   run?: RunView;
   error?: AppError;
   changes?: ChangesView;
@@ -251,6 +254,7 @@ export class Workbench {
         hasApiKey: Boolean(this.webSearch.apiKey),
       } : { enabled: false, hasApiKey: false },
       documents: task?.documents.map(documentView) ?? [],
+      plan: task?.plan ?? [],
     });
   }
 }

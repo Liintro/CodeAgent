@@ -62,7 +62,7 @@ function emptySnapshot(hostState: WorkbenchSnapshot['host']): WorkbenchSnapshot 
   return {
     host: hostState, models: currentModels, model: currentModel, tasks: [], roots: [], sandboxStatus: 'untested', timeline: [], mcp: [], acceptance: { commands: [], maxRepairs: 3 },
     permission: { userMode: 'manual', phase: 'act', approval: 'ask_writes_and_commands', scope: 'selected_roots', grants: [] }, memoryEnabled: true,
-    webSearch: { enabled: false, hasApiKey: false }, documents: [],
+    webSearch: { enabled: false, hasApiKey: false }, documents: [], plan: [],
   };
 }
 
