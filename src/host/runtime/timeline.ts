@@ -1,6 +1,6 @@
 import type { SessionStore } from '../kernel/session.js';
 import { FEEDBACK_PREFIX, RECOVERY_PREFIX, STOP_PREFIX } from '../../shared/constants.js';
-import type { MemoryOutcome, MemoryShown, RootView, RunEvent, TimelineItem, ToolItem, ToolState, VerificationItem } from '../../shared/contracts/index.js';
+import type { MemoryOutcome, MemoryShown, RootView, RunEvent, SubagentStep, TimelineItem, ToolItem, ToolState, VerificationItem } from '../../shared/contracts/index.js';
 
 type Timed = { at: number; item: TimelineItem };
 
@@ -10,9 +10,16 @@ export const NOTICE = { compaction: '较早的对话已压缩为摘要', trim: '
 export function rebuildTimeline(session: SessionStore, events: RunEvent[], roots: RootView[], outcomes: Map<string, MemoryOutcome> = new Map()): TimelineItem[] {
   const requested = new Map<string, RunEvent>();
   const finished = new Map<string, RunEvent>();
+  // 子智能体按会话 id 归组：探索者挂在触发它的 explore 调用上（key 即调用 id），验证者单独成行。
+  const steps = new Map<string, SubagentStep[]>();
+  const answers = new Map<string, string>();
   for (const event of events) {
     if (event.type === 'tool.requested') requested.set(String(event.data.toolCallId), event);
     else if (event.type === 'tool.finished') finished.set(String(event.data.toolCallId), event);
+    else if (event.type === 'subagent.tool') {
+      const { sessionId, toolCallId, name, target, state } = event.data as Record<string, string>;
+      steps.set(sessionId, [...steps.get(sessionId) ?? [], { toolCallId, name, target, state: state as SubagentStep['state'] }]);
+    } else if (event.type === 'subagent.finished') answers.set(String(event.data.sessionId), String(event.data.answer ?? ''));
   }
   const items: Timed[] = [];
   const tools = new Map<string, ToolItem>();
@@ -48,6 +55,16 @@ export function rebuildTimeline(session: SessionStore, events: RunEvent[], roots
       const hostExited = (message.details as { hostExited?: boolean } | undefined)?.hostExited;
       tool.state = hostExited ? 'unknown' : message.isError ? 'failed' : 'succeeded';
     }
+  }
+  for (const event of events) {
+    if (event.type !== 'subagent.started') continue;
+    const { sessionId, kind, key } = event.data as Record<string, string>;
+    if (kind === 'explorer') {
+      const tool = tools.get(key);
+      if (tool) tool.steps = steps.get(sessionId) ?? [];
+      continue;
+    }
+    items.push({ at: event.at, item: { kind: 'tool', toolCallId: sessionId, name: 'verifier', args: { command: String(event.data.title ?? '') }, state: answers.has(sessionId) ? 'succeeded' : 'unknown', output: answers.get(sessionId) ?? '', steps: steps.get(sessionId) ?? [] } });
   }
   for (const [id, tool] of tools) {
     const event = finished.get(id);
