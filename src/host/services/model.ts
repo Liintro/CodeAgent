@@ -22,7 +22,7 @@ export class ModelService {
     const id = randomUUID();
     this.wb.error = undefined;
     this.wb.testRun = { id, taskId: '', phase: 'running', toolErrors: false };
-    this.wb.active = { id, kind: 'test', cancelRequested: false, verifyAbort: new AbortController() };
+    this.wb.active = { id, kind: 'test', cancelRequested: false, verifyAbort: new AbortController(), queued: [] };
     this.wb.emit({ type: 'run.changed', value: this.wb.testRun });
     const done = this.runModelTest(id);
     this.wb.active.done = done;

@@ -11,7 +11,7 @@ const NO_USAGE = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens
 
 /**
  * 一个 Run 里每次模型请求的组装：从会话重建对话（会话是唯一来源，压缩、裁剪与重试后的请求都与它一致），
- * 超出预算时分层压缩，召回槽位插到锚点之前，任务状态附在末尾。
+ * 运行中排队的用户消息先写进会话；超出预算时分层压缩，召回槽位插到锚点之前，任务状态附在末尾。
  */
 export class RequestAssembly {
   // 尾部状态与上下文大小在 prepareRequest 里算好，随后的 transformContext 与输出上限直接使用。
@@ -46,6 +46,10 @@ export class RequestAssembly {
     const { task, wb, runId } = this;
     // 系统提示是对话记录开头的 system 消息，不在会话里，原样放回。
     const leading = request.context.messages.filter(message => message.role === 'system');
+    for (const text of wb.takeQueued(task)) {
+      task.session.appendMessage(userMessage(text));
+      wb.ledger.appendEvent(runId, 'steering.inserted', { textPreview: text.slice(0, 200) });
+    }
     await this.refreshTail();
     const force = wb.active?.id === runId && wb.active.forceCompaction === true;
     if (force) wb.active!.forceCompaction = false;

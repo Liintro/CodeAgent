@@ -70,6 +70,8 @@ export type ActiveRun = {
   agent?: KernelAgent;
   verifyAbort: AbortController;
   cancelRequested: boolean;
+  /** 运行中用户发来的消息（时间线条目 id 与原文），在下一次模型请求前插入对话。 */
+  queued: { id: string; text: string }[];
   /** 下一次模型请求前无条件压缩一次（length 停止后的恢复）。 */
   forceCompaction?: boolean;
   done?: Promise<unknown>;
@@ -173,6 +175,16 @@ export class Workbench {
     task.timeline.push(item);
     this.emit({ type: 'message.started', id: item.id, role: 'user' });
     this.emit({ type: 'message.ended', id: item.id, text: message.text });
+  }
+
+  /** 取出排队的消息：时间线上不再显示“已排队”，原文交给调用方写进对话。 */
+  takeQueued(task: TaskState): string[] {
+    const queued = this.active?.taskId === task.id ? this.active.queued.splice(0) : [];
+    if (!queued.length) return [];
+    const ids = new Set(queued.map(item => item.id));
+    task.timeline = task.timeline.map(item => item.kind === 'message' && ids.has(item.id) ? { ...item, queued: undefined } : item);
+    this.emitSnapshot();
+    return queued.map(item => item.text);
   }
 
   setPhase(task: TaskState, phase: RunPhase, attempt?: number): void {

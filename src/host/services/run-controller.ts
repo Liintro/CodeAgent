@@ -21,7 +21,7 @@ import { RequestAssembly } from './request-context.js';
 import type { TaskService } from './task-service.js';
 import { buildTools } from './toolset.js';
 import { failureHash, feedbackMessage, runVerification } from './verification.js';
-import { createError, userMessage, type RunEnd, type TaskState, type Workbench } from './workbench.js';
+import { createError, userMessage, type ActiveRun, type RunEnd, type TaskState, type Workbench } from './workbench.js';
 
 /** followUp：任务里已经有过 Run，这条是用户的后续消息（可能是在纠正上一个回答）。 */
 type RunOptions = { verifyOnly?: boolean; resumed?: boolean; followUp?: boolean };
@@ -44,7 +44,20 @@ export class RunController {
 
   startMessage(text: string): { runId: string } {
     this.wb.assertConfigured();
+    const active = this.wb.active;
+    if (active?.agent && active.taskId === this.wb.taskId && !active.cancelRequested) return this.enqueue(active, text);
     return this.beginRun(text, { followUp: true });
+  }
+
+  // 运行中发来的消息不打断当前请求：排队，下一次模型请求前插入（见 RequestAssembly）。
+  private enqueue(active: ActiveRun, text: string): { runId: string } {
+    const task = this.wb.taskOf(active)!;
+    const id = randomUUID();
+    active.queued.push({ id, text });
+    task.timeline.push({ kind: 'message', id, role: 'user', text, queued: true });
+    this.wb.ledger.appendEvent(active.id, 'steering.queued', { textPreview: text.slice(0, 200) });
+    this.wb.emitSnapshot();
+    return { runId: active.id };
   }
 
   async implementPlan(): Promise<{ runId: string }> {
@@ -92,7 +105,7 @@ export class RunController {
     task.error = undefined;
     task.interrupted = false;
     task.run = { id: run.id, taskId: task.id, phase: 'running', toolErrors: false };
-    this.wb.active = { id: run.id, kind: 'prompt', taskId: task.id, cancelRequested: false, verifyAbort: new AbortController() };
+    this.wb.active = { id: run.id, kind: 'prompt', taskId: task.id, cancelRequested: false, verifyAbort: new AbortController(), queued: [] };
     if (options.verifyOnly) {
       task.timeline.push({ kind: 'notice', id: randomUUID(), text: VERIFY_ONLY_TEXT });
     } else {
@@ -164,8 +177,24 @@ ${modeStatement(task, this.wb.policy)}`,
       else await this.endRun(task, runId, 'failed', 'agent_error', createError('RUN_FAILED', '执行失败', error, this.wb.apiKey));
     } finally {
       unsubscribe?.();
+      const left = this.wb.active?.id === runId ? this.wb.active.queued : [];
       if (this.wb.active?.id === runId) this.wb.active = undefined;
+      this.sendLeftover(task, left);
     }
+  }
+
+  // 模型最后一次回复之后（例如验证期间）才排队的消息：正常结束时作为下一条消息发出，取消或失败时不再自动发送。
+  private sendLeftover(task: TaskState, left: { id: string; text: string }[]): void {
+    if (!left.length) return;
+    const ids = new Set(left.map(item => item.id));
+    task.timeline = task.timeline.filter(item => !(item.kind === 'message' && ids.has(item.id)));
+    const text = left.map(item => item.text).join('\n\n');
+    if (task.run?.phase === 'finished') {
+      this.beginRun(text, { followUp: true });
+      return;
+    }
+    task.timeline.push({ kind: 'notice', id: randomUUID(), text: `执行已结束，排队的消息未发送：${text.slice(0, 200)}` });
+    this.wb.emitSnapshot();
   }
 
   // 中断过的 Task 先核对真实状态，并把恢复说明作为单独的标注消息放在用户消息之前。
@@ -187,8 +216,9 @@ ${modeStatement(task, this.wb.policy)}`,
     let input = first;
     let previous: { hash: string; fingerprint: string } | undefined;
     for (let attempt = 0; ; attempt++) {
-      if (input) {
-        const ended = await model.promptWithRecovery(task, runId, agent!, input);
+      // 一轮回复结束后才排队的消息接着发给模型，然后再进入验证。
+      for (let next = input ?? []; next.length; next = this.wb.takeQueued(task).map(userMessage)) {
+        const ended = await model.promptWithRecovery(task, runId, agent!, next);
         if (ended) return ended;
       }
       if (task.permission.userMode === 'plan') return { phase: 'finished', stopReason: 'passed' };

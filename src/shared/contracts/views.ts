@@ -113,7 +113,8 @@ export type VerificationItem = {
 export type PlanItem = { content: string; status: 'pending' | 'in_progress' | 'completed' };
 export type MemoryShown = { id: string; kind: MemoryKind; validity: MemoryValidity; repoLabel: string; text: string };
 export type TimelineItem =
-  | { kind: 'message'; id: string; role: 'user' | 'assistant'; text: string; harness?: boolean }
+  /** queued：运行中发送、还没有交给模型的消息。 */
+  | { kind: 'message'; id: string; role: 'user' | 'assistant'; text: string; harness?: boolean; queued?: boolean }
   | { kind: 'notice'; id: string; text: string }
   /** outcome：这次 Run 之后记忆是否起了作用（验证通过、仍未通过、结果被用户还原）；Run 未结束或无从判断时为空。 */
   | { kind: 'memory'; id: string; runId: string; items: MemoryShown[]; outcome?: MemoryOutcome }

@@ -23,7 +23,10 @@ export const MessageRow = memo(function MessageRow({ item, pending }: { item: Ex
   if (item.role === 'user') {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[85%] whitespace-pre-wrap rounded-xl rounded-br-sm bg-surface-3 px-3.5 py-2 text-[13px] [overflow-wrap:anywhere]">{item.text}</div>
+        <div className="flex max-w-[85%] flex-col items-end gap-1">
+          <div className={cn('whitespace-pre-wrap rounded-xl rounded-br-sm bg-surface-3 px-3.5 py-2 text-[13px] [overflow-wrap:anywhere]', item.queued && 'opacity-70')}>{item.text}</div>
+          {item.queued && <span data-testid="queued" className="text-[11px] text-subtle">已排队</span>}
+        </div>
       </div>
     );
   }
