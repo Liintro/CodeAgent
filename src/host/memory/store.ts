@@ -84,6 +84,11 @@ export class MemoryStore {
     return row && toRow(row);
   }
 
+  hasActive(repoIds: string[]): boolean {
+    if (!repoIds.length) return false;
+    return this.db.prepare(`SELECT 1 FROM memory_item WHERE status = 'active' AND repo_id IN (${placeholders(repoIds)}) LIMIT 1`).get(...repoIds) !== undefined;
+  }
+
   list(repoIds: string[]): MemoryRow[] {
     if (!repoIds.length) return [];
     return (this.db.prepare(`SELECT * FROM memory_item WHERE status <> 'deleted' AND repo_id IN (${placeholders(repoIds)}) ORDER BY updated_at DESC`)

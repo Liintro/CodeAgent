@@ -116,7 +116,7 @@ export class RunController {
       const rules = await readWorkspaceRules(task.roots, this.rulesPath);
       await tasks.refreshRoots(task);
       task.profile = this.wb.navigationEnabled ? (await Promise.all(task.roots.map(root => repositoryProfile(root).catch(() => '')))).filter(Boolean).join('\n') : undefined;
-      const tools = buildTools(this.wb, task, events, gate.trustedMcpNames(), this.wb.memoryEnabled ? params => memory.searchForTool(task, runId, params) : undefined);
+      const tools = buildTools(this.wb, task, events, gate.trustedMcpNames(), await memory.searchAvailable(task) ? params => memory.searchForTool(task, runId, params) : undefined);
       this.wb.ledger.appendEvent(runId, 'run.started', {
         modelId: profile?.modelId, permission: task.permission, sandboxStatus: this.wb.sandboxStatus(),
         roots: task.roots.map(({ id, alias, path }) => ({ id, alias, path })),

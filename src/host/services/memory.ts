@@ -99,6 +99,11 @@ export class MemoryService {
     return paths;
   }
 
+  /** 只有任务所在仓库里有可用记忆时才提供 memory_search：空库时请求与没有记忆功能时完全相同。 */
+  async searchAvailable(task: TaskState): Promise<boolean> {
+    return this.wb.memoryEnabled && this.wb.memory.hasActive([...(await this.taskRepos(task)).keys()]);
+  }
+
   // memory_search 工具：结果同样记入 memory_use，所以也参与之后的效果加权。
   async searchForTool(task: TaskState, runId: string, request: Omit<SearchRequest, 'roots' | 'runId'>): Promise<string> {
     const found = await search(this.wb.memory, { ...request, roots: task.roots.filter(root => !root.missing), runId }, this.wb.policy.settings.recall);
