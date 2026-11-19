@@ -86,9 +86,13 @@ const MIGRATIONS = [`
     task_id TEXT NOT NULL REFERENCES task(id), doc_id TEXT NOT NULL, position INTEGER NOT NULL, name TEXT NOT NULL, path TEXT NOT NULL,
     kind TEXT NOT NULL, sha256 TEXT NOT NULL, size INTEGER NOT NULL, mtime_ms REAL NOT NULL, pages INTEGER, sections INTEGER NOT NULL,
     no_text_pages_json TEXT NOT NULL DEFAULT '[]', PRIMARY KEY (task_id, doc_id));
+`, `
+  CREATE TABLE session_entry (
+    task_id TEXT NOT NULL REFERENCES task(id), seq INTEGER NOT NULL, type TEXT NOT NULL, at INTEGER NOT NULL, data_json TEXT NOT NULL,
+    PRIMARY KEY (task_id, seq));
 `];
 
-// 只记录事实（发生了什么）；对话内容由 Pi SessionManager 保存。
+// 只记录事实（发生了什么）；对话内容在 session_entry 表里，由 kernel/session.ts 读写。
 export class Ledger {
   private readonly db: DatabaseSync;
 
@@ -130,13 +134,13 @@ export class Ledger {
 
   // ---- Task ----
 
-  saveTask(task: TaskRecord, sessionFile?: string): void {
-    this.db.prepare(`INSERT INTO task (id, title, created_at, updated_at, user_mode, grants_json, session_file, acceptance_json, delivery)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  // session_file 列是旧版本留下的（会话曾存为 JSONL 文件），不再写入。
+  saveTask(task: TaskRecord): void {
+    this.db.prepare(`INSERT INTO task (id, title, created_at, updated_at, user_mode, grants_json, acceptance_json, delivery)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET title=excluded.title, updated_at=excluded.updated_at, user_mode=excluded.user_mode,
-        grants_json=excluded.grants_json, session_file=COALESCE(excluded.session_file, session_file),
-        acceptance_json=excluded.acceptance_json, delivery=excluded.delivery`)
-      .run(task.id, task.title, task.createdAt, task.updatedAt, task.userMode, JSON.stringify(task.grants), sessionFile ?? null, JSON.stringify(task.acceptance), task.delivery);
+        grants_json=excluded.grants_json, acceptance_json=excluded.acceptance_json, delivery=excluded.delivery`)
+      .run(task.id, task.title, task.createdAt, task.updatedAt, task.userMode, JSON.stringify(task.grants), JSON.stringify(task.acceptance), task.delivery);
     this.db.prepare('DELETE FROM task_root WHERE task_id = ?').run(task.id);
     const insert = this.db.prepare('INSERT INTO task_root (task_id, root_id, alias, path, position, git_root) VALUES (?, ?, ?, ?, ?, ?)');
     task.roots.forEach((root, position) => insert.run(task.id, root.id, root.alias, root.path, position, root.gitRoot ?? null));

@@ -9,6 +9,9 @@ export type RequestHooks = {
   transformContext?: (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>;
 };
 
+/** 会话里只有这四种消息，原样交给 Provider。 */
+export const toLlm = (messages: AgentMessage[]) => messages.filter(message => ['system', 'user', 'assistant', 'toolResult'].includes(message.role)) as Message[];
+
 /** 对话记录开头的 system 消息携带系统提示与工具声明；已有 system 消息时不再插入。 */
 export function initialTranscript(systemPrompt: string | undefined, tools: AgentTool<any>[], messages: AgentMessage[] = []): AgentMessage[] {
   const transcript = messages.slice();

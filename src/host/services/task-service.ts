@@ -1,10 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, readdirSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
-import { join } from 'node:path';
-import { SessionManager } from '@earendil-works/pi-coding-agent';
 import type { Acceptance, DetectedCommand, DocumentView, PermissionSetting, RootView, UserMode } from '../../shared/contracts/index.js';
 import { detectCommands } from '../engineering/index.js';
+import { SessionStore } from '../kernel/session.js';
 import type { TaskRecord } from '../runtime/ledger.js';
 import { rebuildTimeline } from '../runtime/timeline.js';
 import { permissionFor } from '../tools/permission.js';
@@ -12,7 +10,7 @@ import * as git from '../workspace/git.js';
 import { openRoot } from '../workspace/workspace.js';
 import { documentView, type TaskState, type Workbench } from './workbench.js';
 
-/** 任务的增删改、目录与文档、权限模式、验收命令，以及任务在账本和会话文件中的持久化。 */
+/** 任务的增删改、目录与文档、权限模式、验收命令，以及任务与会话在账本中的持久化。 */
 export class TaskService {
   constructor(
     private readonly wb: Workbench,
@@ -236,13 +234,8 @@ export class TaskService {
     task.loaded = true;
   }
 
-  private openSession(task: TaskState): SessionManager {
-    const cwd = task.roots[0]?.path ?? process.cwd();
-    if (!this.wb.dataDir) return SessionManager.inMemory(cwd);
-    // 会话文件名以时间戳开头；目录可能是在添加目录之前创建的，所以不按 cwd 匹配，直接打开最新的文件。
-    const directory = join(this.wb.dataDir, 'sessions', task.id);
-    const latest = existsSync(directory) ? readdirSync(directory).filter(name => name.endsWith('.jsonl')).sort().at(-1) : undefined;
-    return latest ? SessionManager.open(join(directory, latest), directory) : SessionManager.create(cwd, directory);
+  private openSession(task: TaskState): SessionStore {
+    return new SessionStore(this.wb.ledger.database, task.id);
   }
 
   save(task: TaskState): void {
@@ -251,7 +244,7 @@ export class TaskService {
       id: task.id, title: task.title, createdAt: task.createdAt, updatedAt: task.updatedAt, userMode: task.permission.userMode,
       grants: task.permission.grants, acceptance: task.acceptance, delivery: task.delivery,
       roots: task.roots.map(root => ({ id: root.id, alias: root.alias, path: root.path, gitRoot: root.git?.gitRoot })),
-    }, task.session?.getSessionFile());
+    });
   }
 
   private createTask(roots: RootView[]): TaskState {

@@ -19,7 +19,7 @@ const paramsSchema = z.strictObject({
     defaultMaxRepairs: int(0, 10),
   }).optional(),
   compaction: z.strictObject({
-    /** 为模型输出预留的窗口比例与上限；不少于一次完整输出加 Pi 的安全余量。 */
+    /** 为模型输出预留的窗口比例与上限；不少于一次完整输出加安全余量。 */
     reserveRatio: num(0.05, 0.5),
     reserveCapTokens: int(1024, 131072),
     /** 预留量最多占窗口的比例。 */
@@ -27,6 +27,12 @@ const paramsSchema = z.strictObject({
     /** 压缩后原样保留的最近对话 token 数及其窗口比例上限。 */
     keepRecentTokens: int(1000, 200000),
     keepRecentRatio: num(0.05, 0.8),
+    /** 分层压缩：先省略较早的工具结果，仍超出才摘要；关闭时只摘要（评测开/关对照用）。 */
+    layers: z.boolean().optional(),
+    /** 裁剪时原样保留的最近工具结果数。 */
+    keepToolResults: int(1, 64),
+    /** 摘要请求里每个工具结果最多带多少字符。 */
+    summaryToolResultChars: int(200, 20000),
   }).optional(),
   recall: z.strictObject({
     maxItems: int(0, 20),
@@ -74,7 +80,7 @@ export type PolicyParams = z.infer<typeof paramsSchema>;
 export const DEFAULT_SETTINGS = {
   shellMaxTimeoutSec: undefined as number | undefined,
   repair: { defaultMaxRepairs: DEFAULT_MAX_REPAIRS },
-  compaction: { reserveRatio: 0.25, reserveCapTokens: 16384, reserveMaxRatio: 0.5, keepRecentTokens: 20000, keepRecentRatio: 0.35 },
+  compaction: { reserveRatio: 0.25, reserveCapTokens: 16384, reserveMaxRatio: 0.5, keepRecentTokens: 20000, keepRecentRatio: 0.35, layers: true, keepToolResults: 8, summaryToolResultChars: 2000 },
   recall: {
     maxItems: 5,
     candidates: 20,

@@ -11,7 +11,7 @@ import type {
   StreamFn,
 } from '@earendil-works/pi-agent-core';
 import { validateToolArguments, type AssistantMessage, type Message, type Model, type ToolCall, type ToolResultMessage } from '@earendil-works/pi-ai';
-import { initialTranscript, requestContext, requestOptions, type RequestHooks } from './context.js';
+import { initialTranscript, requestContext, requestOptions, toLlm, type RequestHooks } from './context.js';
 
 /** 一组工具调用怎样执行：isReadOnly 为真的连续调用并发（不超过 maxParallel），其余逐个执行。 */
 export type ToolScheduling = { parallel: boolean; maxParallel: number; isReadOnly: (name: string) => boolean };
@@ -21,9 +21,6 @@ export type NativeAgentOptions = Pick<AgentOptions, 'initialState' | 'transformC
 type Listener = (event: AgentEvent, signal: AbortSignal) => unknown;
 type Finalized = { toolCall: AgentToolCall; result: AgentToolResult<any>; isError: boolean; durationMs?: number };
 type Prepared = { toolCall: AgentToolCall; tool: AgentTool<any>; args: unknown };
-
-// 与 Pi Agent 未指定 convertToLlm 时的默认做法相同。
-const defaultConvertToLlm = (messages: AgentMessage[]) => messages.filter(message => ['system', 'user', 'assistant', 'toolResult'].includes(message.role)) as Message[];
 
 const EMPTY_USAGE = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
 
@@ -128,7 +125,7 @@ export class NativeAgent {
   }
 
   private async streamResponse(messages: AgentMessage[], model: Model<any>, signal: AbortSignal): Promise<AssistantMessage> {
-    const context = await requestContext(messages, { convertToLlm: this.options.convertToLlm ?? defaultConvertToLlm, transformContext: this.options.transformContext }, signal);
+    const context = await requestContext(messages, { convertToLlm: this.options.convertToLlm ?? toLlm, transformContext: this.options.transformContext }, signal);
     const response = await this.options.streamFn(model, context, requestOptions(model, signal));
     const result = async () => Object.assign(await response.result(), { thinkingLevel: 'off' });
     let added = false;

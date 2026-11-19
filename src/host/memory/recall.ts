@@ -4,6 +4,7 @@ import { repoOf, type RepoRef } from './repo.js';
 import type { Anchor, MemoryRow, MemoryStore } from './store.js';
 import type { RecallSettings } from '../runtime/policy.js';
 import { driftNote, evaluate, type Evaluation } from './validity.js';
+import { tokensOf } from '../kernel/tokens.js';
 
 const STOPWORDS = new Set(['test', 'tests', 'testing', 'java', 'python', 'error', 'errors', 'fail', 'failed', 'failure', 'class', 'method', 'function', 'file', 'files',
   'code', 'with', 'from', 'this', 'that', 'have', 'into', 'name', 'value', 'build', 'main', 'src', 'true', 'false', 'null', 'none', 'public', 'private', 'static',
@@ -125,14 +126,6 @@ async function render(index: number, item: MemoryRow, evaluation: Evaluation, re
 }
 
 const indent = (text: string) => text.split('\n').map(line => `   ${line}`).join('\n');
-
-// Pi 的 estimateTokens 一律按“字符数 / 4”，中日韩文字实际接近每字一个 token，按此计会严重低估。
-const CJK = /[　-〿぀-ヿ㐀-䶿一-鿿가-힯＀-￯]/g;
-
-export function tokensOf(text: string): number {
-  const cjk = text.match(CJK)?.length ?? 0;
-  return cjk + Math.ceil((text.length - cjk) / 4);
-}
 
 // ---- 请求级注入：纯函数，不读写任何存储 ----
 
