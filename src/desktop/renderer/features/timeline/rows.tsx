@@ -1,6 +1,6 @@
 import { memo, useEffect, useState, type ReactNode } from 'react';
 import {
-  AlertTriangle, BookOpen, Check, ChevronRight, CircleSlash, FileCode2, FilePen, FolderSearch, Globe, Info, Loader2, Plug, ShieldCheck, Terminal, X,
+  AlertTriangle, BookOpen, Bot, Check, ChevronRight, CircleSlash, FileCode2, FilePen, FolderSearch, Globe, Info, Loader2, Plug, ShieldCheck, Terminal, X,
 } from 'lucide-react';
 import type { TimelineItem, ToolItem, VerificationItem } from '../../../../shared/contracts';
 import { Badge } from '@/components/ui/misc';
@@ -91,8 +91,38 @@ export const ExploreRow = memo(function ExploreRow({ tools }: { tools: ToolItem[
 
 export const ToolRow = memo(function ToolRow({ item }: { item: ToolItem }) {
   if (item.name === 'edit' || item.name === 'write') return <EditRow item={item} />;
+  if (item.name === 'explore' || item.name === 'verifier') return <SubagentRow item={item} />;
   return <ToolLine item={item} expandable />;
 });
+
+/** 探索者与验证者：折叠成一行（问题或命令、步数），展开后是子智能体的工具调用与结论。 */
+function SubagentRow({ item }: { item: ToolItem }) {
+  const [open, setOpen] = useState(false);
+  const steps = item.steps ?? [];
+  const target = item.name === 'explore' ? String((item.args as { question?: unknown })?.question ?? '') : commandOf(item.args) ?? '';
+  return (
+    <div data-testid="subagent" data-kind={item.name} className="text-xs">
+      <button className="flex w-full items-center gap-2 rounded-md py-0.5 text-left hover:text-foreground" onClick={() => setOpen(value => !value)} aria-expanded={open}>
+        <StateIcon state={item.state} fallback={<Bot className="text-subtle" />} />
+        <span className="shrink-0 text-muted-foreground">{toolTitles[item.name]}</span>
+        <span className="min-w-0 truncate text-foreground" title={target}>{target}</span>
+        <span className="ml-auto shrink-0 pl-2 text-[11px] text-subtle tabular-nums">{steps.length} 步</span>
+      </button>
+      {open && (
+        <div className="ml-5 mt-1 space-y-1 rounded-md border border-border bg-surface-2 px-2.5 py-2">
+          {steps.map(step => (
+            <div key={step.toolCallId} className="flex items-center gap-2">
+              <StateIcon state={step.state} fallback={<FileCode2 className="text-subtle" />} />
+              <span className="shrink-0 text-muted-foreground">{toolTitles[step.name] ?? step.name}</span>
+              <span className="min-w-0 truncate font-mono text-[11.5px]" title={step.target}>{step.target}</span>
+            </div>
+          ))}
+          {item.output && <pre className="max-h-72 overflow-auto whitespace-pre-wrap border-t border-border pt-1.5 text-[11.5px] leading-snug">{item.output}</pre>}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function EditRow({ item }: { item: ToolItem }) {
   const path = argPath(item.args);

@@ -77,6 +77,9 @@ export type Acceptance = { commands: VerifyCommand[]; maxRepairs: number };
 export type TaskSummary = { id: string; title: string; updatedAt: number; delivery: Delivery; interrupted: boolean; project?: string };
 export type RunView = { id: string; taskId: string; phase: RunPhase; toolErrors: boolean; attempt?: number };
 
+export type SubagentKind = 'explorer' | 'verifier';
+/** 子智能体的一次工具调用，在折叠的子智能体行里展开显示。 */
+export type SubagentStep = { toolCallId: string; name: string; target: string; state: 'running' | 'succeeded' | 'failed' };
 export type ToolState = 'requested' | 'awaiting_approval' | 'running' | 'succeeded' | 'failed' | 'denied' | 'cancelled' | 'unknown';
 export type ToolItem = {
   kind: 'tool';
@@ -93,6 +96,8 @@ export type ToolItem = {
   runner?: RunnerKind;
   error?: AppError;
   source?: { mcpServer: string; tool: string };
+  /** explore 工具与验证者：子智能体做过的工具调用。 */
+  steps?: SubagentStep[];
 };
 export type VerificationState = 'running' | 'passed' | 'failed' | 'timeout' | 'cancelled' | 'unavailable';
 export type VerificationItem = {

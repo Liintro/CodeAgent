@@ -19,7 +19,7 @@ export const verificationText: Record<VerificationState, string> = {
 export const toolTitles: Record<string, string> = {
   read: '读取文件', grep: '搜索内容', find: '查找文件', ls: '列出目录', edit: '编辑文件', write: '写入文件', powershell: 'PowerShell', git: 'Git 查询',
   doc_outline: '文档结构', doc_read: '读取文档', doc_view: '查看文档图像', code_outline: '代码结构', find_symbol: '查找定义', related_files: '相关文件',
-  web_search: '联网搜索', web_fetch: '读取网页', memory_search: '查询记忆', update_plan: '更新计划',
+  web_search: '联网搜索', web_fetch: '读取网页', memory_search: '查询记忆', update_plan: '更新计划', explore: '探索者', verifier: '验证者',
 };
 
 export const runPhaseText: Record<RunPhase, string> = {

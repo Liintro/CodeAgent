@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { AgentMessage } from '@earendil-works/pi-agent-core';
+import type { AgentMessage, AgentTool } from '@earendil-works/pi-agent-core';
 import type { AppError } from '../../shared/contracts/index.js';
 import { CONTINUE_TEXT, IMPLEMENT_PLAN_TEXT, VERIFY_ONLY_TEXT } from '../../shared/constants.js';
 import { repositoryProfile } from '../engineering/navigation.js';
@@ -10,6 +10,7 @@ import type { Slot } from '../memory/recall.js';
 import type { PermissionGate } from '../policy/permission-gate.js';
 import { classify } from '../tools/permission.js';
 import { repairDanglingToolCalls } from '../runtime/recovery.js';
+import { createExploreTool, runVerifier, type SubagentDeps } from '../subagents/roles.js';
 import * as delivery from '../workspace/delivery.js';
 import { readWorkspaceRules } from '../workspace/workspace.js';
 import type { AgentEvents } from './agent-events.js';
@@ -129,7 +130,12 @@ export class RunController {
       const rules = await readWorkspaceRules(task.roots, this.rulesPath);
       await tasks.refreshRoots(task);
       task.profile = this.wb.navigationEnabled ? (await Promise.all(task.roots.map(root => repositoryProfile(root).catch(() => '')))).filter(Boolean).join('\n') : undefined;
-      const tools = buildTools(this.wb, task, events, gate.trustedMcpNames(), await memory.searchAvailable(task) ? params => memory.searchForTool(task, runId, params) : undefined);
+      const trusted = gate.trustedMcpNames();
+      const tools = buildTools(this.wb, task, (toolCallId, root) => events.markToolRunning(task, toolCallId, root), trusted, await memory.searchAvailable(task) ? params => memory.searchForTool(task, runId, params) : undefined);
+      // 子智能体用自己的一套工具：只读（验证者另加命令），不在主时间线上逐条显示。
+      const childTools = (allowed: string[]) => buildTools(this.wb, task, () => undefined, trusted).filter(tool => tool.name !== 'update_plan' && allowed.includes(classify(tool.name, trusted)));
+      const subagents: SubagentDeps = { wb: this.wb, task, runId, model: model.createModel(profile!), streamFn: model.streamFn(profile!) };
+      if (this.wb.policy.settings.subagents.explorer && task.roots.length) tools.push(createExploreTool(subagents, () => childTools(['read'])));
       this.wb.ledger.appendEvent(runId, 'run.started', {
         modelId: profile?.modelId, permission: task.permission, sandboxStatus: this.wb.sandboxStatus(),
         roots: task.roots.map(({ id, alias, path }) => ({ id, alias, path })),
@@ -169,7 +175,7 @@ ${modeStatement(task, this.wb.policy)}`,
         if (this.wb.active?.id === runId) this.wb.active.agent = agent;
         unsubscribe = agent.subscribe(event => events.onAgentEvent(task, runId, event));
       }
-      const end = await this.drive(task, runId, agent, first, options, startTrees, mutationsAtStart, slots);
+      const end = await this.drive(task, runId, agent, first, options, startTrees, mutationsAtStart, slots, { ...subagents, tools: () => childTools(['read', 'shell']) });
       await this.endRun(task, runId, end.phase, end.stopReason, end.error);
     } catch (error) {
       if (this.wb.active?.cancelRequested) await this.endRun(task, runId, 'cancelled', 'cancelled');
@@ -210,7 +216,7 @@ ${modeStatement(task, this.wb.policy)}`,
   // 提示 -> 验证 -> 修复；预算、无进展、取消、模型错误都会结束循环。
   private async drive(
     task: TaskState, runId: string, agent: NativeAgent | undefined, first: AgentMessage[] | undefined, options: RunOptions,
-    startTrees: Map<string, string>, mutationsAtStart: Map<string, number>, slots: Slot[],
+    startTrees: Map<string, string>, mutationsAtStart: Map<string, number>, slots: Slot[], verifier: SubagentDeps & { tools: () => AgentTool<any>[] },
   ): Promise<RunEnd> {
     const { deliveries, memory, model } = this.services;
     let input = first;
@@ -252,7 +258,11 @@ ${modeStatement(task, this.wb.policy)}`,
       }
 
       const alias = task.roots.find(root => root.id === failed.rootId)?.alias ?? failed.rootId;
-      const feedback = feedbackMessage(failed, alias, attempt + 1, task.acceptance.maxRepairs);
+      const report = this.wb.policy.settings.subagents.verifier && (failed.status === 'failed' || failed.status === 'timeout')
+        ? await runVerifier(verifier, this.services.gate, verifier.tools(), failed, alias, this.wb.active?.verifyAbort.signal)
+        : undefined;
+      if (this.wb.active?.cancelRequested) return { phase: 'cancelled', stopReason: 'cancelled' };
+      const feedback = feedbackMessage(failed, alias, attempt + 1, task.acceptance.maxRepairs) + (report ? `\n\n验证者（子智能体）的复现与定位，仅供参考：\n${report}` : '');
       this.wb.ledger.appendEvent(runId, 'repair.requested', { attempt: attempt + 1, reason: failed.status, commandId: failed.commandId });
       this.wb.setPhase(task, 'running', attempt + 1);
       this.wb.pushMessage(task, { text: feedback, harness: true });

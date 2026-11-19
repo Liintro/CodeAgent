@@ -77,6 +77,16 @@ const paramsSchema = z.strictObject({
     parallelReadOnlyTools: z.boolean().optional(),
     maxParallelTools: int(1, 16),
   }).optional(),
+  subagents: z.strictObject({
+    /** 注册 explore 工具：多步定位问题交给只读的探索子智能体。 */
+    explorer: z.boolean().optional(),
+    explorerToolCalls: int(1, 50),
+    explorerOutputTokens: int(256, 16384),
+    /** 验收失败后先由验证者复现并缩小范围，再交给主 Agent 修复。 */
+    verifier: z.boolean().optional(),
+    verifierToolCalls: int(1, 50),
+    verifierOutputTokens: int(256, 16384),
+  }).optional(),
   permission: z.strictObject({
     /** “允许本任务”授权的命令前缀最多取几个单词（npm run build 为 3）。 */
     grantPrefixWords: int(1, 5),
@@ -116,6 +126,7 @@ export const DEFAULT_SETTINGS = {
   },
   output: { navigationChars: 16 * 1024, navigationFiles: 4000, documentChars: 24 * 1024, verificationTailLines: 200, verificationTailChars: 16 * 1024 },
   kernel: { parallelReadOnlyTools: true, maxParallelTools: 4 },
+  subagents: { explorer: true, explorerToolCalls: 12, explorerOutputTokens: 2000, verifier: true, verifierToolCalls: 8, verifierOutputTokens: 2000 },
   permission: { grantPrefixWords: 3 },
   budget: { maxTokens: 5_000_000, maxToolCalls: 1000, maxWallSeconds: 7200 },
 };
@@ -162,6 +173,7 @@ function resolve(params: PolicyParams): PolicySettings {
     recall: { ...d.recall, ...params.recall, weights: { ...d.recall.weights, ...params.recall?.weights } },
     output: { ...d.output, ...params.output },
     kernel: { ...d.kernel, ...params.kernel },
+    subagents: { ...d.subagents, ...params.subagents },
     permission: { ...d.permission, ...params.permission },
     budget: { ...d.budget, ...params.budget },
   };

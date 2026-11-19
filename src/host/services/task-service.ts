@@ -230,7 +230,7 @@ export class TaskService {
   load(task: TaskState): void {
     if (task.loaded) return;
     task.session = this.openSession(task);
-    const events = this.wb.ledger.taskEvents(task.id, 'tool.requested', 'tool.finished', 'verification.finished', 'memory.recalled');
+    const events = this.wb.ledger.taskEvents(task.id, 'tool.requested', 'tool.finished', 'verification.finished', 'memory.recalled', 'subagent.started', 'subagent.tool', 'subagent.finished');
     const memoryRuns = [...new Set(events.filter(event => event.type === 'memory.recalled').map(event => event.runId))];
     task.timeline = rebuildTimeline(task.session, events, task.roots, this.wb.memory.runOutcomes(memoryRuns));
     task.plan = currentPlan(task.session);
