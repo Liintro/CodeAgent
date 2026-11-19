@@ -8,6 +8,7 @@ import type { TaskState, Workbench } from './workbench.js';
 // 摘要只为能确定具体文件的调用记下内容标识。
 const FILE_TOOLS = new Set(['read', 'edit', 'write']);
 const VERIFICATION_TAIL_LINES = 20;
+const PLAN_MARK = { pending: ' ', in_progress: '>', completed: 'x' } as const;
 
 export type Backfill = { files: FileStamp[] };
 
@@ -34,9 +35,10 @@ export async function tailState(wb: Workbench, task: TaskState, backfill?: Backf
   return lines.join('\n');
 }
 
-// 摘要会丢细节：补上最近一次验证的输出尾部，并指出摘要形成后内容已变化的文件。
+// 摘要会丢细节：补上当前计划、最近一次验证的输出尾部，并指出摘要形成后内容已变化的文件。
 async function backfillLines(wb: Workbench, task: TaskState, backfill: Backfill): Promise<string[]> {
   const lines = ['较早的对话已压缩为摘要，以下状态以系统记录为准：'];
+  if (task.plan.length) lines.push(`当前计划：\n${task.plan.map(item => `- [${PLAN_MARK[item.status]}] ${item.content}`).join('\n')}`);
   const last = wb.ledger.taskEvents(task.id, 'verification.finished').at(-1)?.data as unknown as VerificationResult | undefined;
   if (last) {
     const alias = task.roots.find(root => root.id === last.rootId)?.alias ?? last.rootId;

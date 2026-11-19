@@ -1,5 +1,5 @@
 import type { SessionStore } from '../kernel/session.js';
-import { FEEDBACK_PREFIX, RECOVERY_PREFIX } from '../../shared/constants.js';
+import { FEEDBACK_PREFIX, RECOVERY_PREFIX, STOP_PREFIX } from '../../shared/constants.js';
 import type { MemoryOutcome, MemoryShown, RootView, RunEvent, TimelineItem, ToolItem, ToolState, VerificationItem } from '../../shared/contracts/index.js';
 
 type Timed = { at: number; item: TimelineItem };
@@ -26,7 +26,7 @@ export function rebuildTimeline(session: SessionStore, events: RunEvent[], roots
     const at = typeof message.timestamp === 'number' ? message.timestamp : entry.at;
     if (message.role === 'user') {
       const text = typeof message.content === 'string' ? message.content : message.content.filter(block => block.type === 'text').map(block => block.text).join('');
-      items.push({ at, item: { kind: 'message', id, role: 'user', text, harness: text.startsWith(FEEDBACK_PREFIX) || text.startsWith(RECOVERY_PREFIX) || undefined } });
+      items.push({ at, item: { kind: 'message', id, role: 'user', text, harness: [FEEDBACK_PREFIX, RECOVERY_PREFIX, STOP_PREFIX].some(prefix => text.startsWith(prefix)) || undefined } });
     } else if (message.role === 'assistant') {
       const text = message.content.filter(block => block.type === 'text').map(block => block.text).join('');
       if (text) items.push({ at, item: { kind: 'message', id, role: 'assistant', text } });

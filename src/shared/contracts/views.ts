@@ -9,7 +9,7 @@ export type ExecutionScope = 'selected_roots' | 'host_full_access';
 export type SandboxStatus = 'untested' | 'available' | 'unavailable' | 'failed';
 export type RunnerKind = 'sandbox' | 'direct';
 
-// grants 只保存精确动作：shell:<rootId>:<命令> 或 mcp:<server>.<tool>，不存在“全部命令”授权。
+// grants：shell:<rootId>:<整条命令>、shell-prefix:<rootId>:<命令前缀> 或 mcp:<server>.<tool>；不存在“全部命令”授权。
 export type PermissionSetting = {
   userMode: UserMode;
   phase: WorkPhase;
@@ -109,9 +109,12 @@ export type VerificationItem = {
   logFile?: string;
   failure?: ParsedFailure;
 };
+/** update_plan 维护的任务计划，固定显示在输入框上方。 */
+export type PlanItem = { content: string; status: 'pending' | 'in_progress' | 'completed' };
 export type MemoryShown = { id: string; kind: MemoryKind; validity: MemoryValidity; repoLabel: string; text: string };
 export type TimelineItem =
-  | { kind: 'message'; id: string; role: 'user' | 'assistant'; text: string; harness?: boolean }
+  /** queued：运行中发送、还没有交给模型的消息。 */
+  | { kind: 'message'; id: string; role: 'user' | 'assistant'; text: string; harness?: boolean; queued?: boolean }
   | { kind: 'notice'; id: string; text: string }
   /** outcome：这次 Run 之后记忆是否起了作用（验证通过、仍未通过、结果被用户还原）；Run 未结束或无从判断时为空。 */
   | { kind: 'memory'; id: string; runId: string; items: MemoryShown[]; outcome?: MemoryOutcome }
@@ -129,6 +132,8 @@ export type ApprovalRequest = {
   cwd?: string;
   argsText: string;
   grantKey?: string;
+  /** 选择“允许本任务”时授权的范围，例如 npm test …。 */
+  grantLabel?: string;
   runner?: RunnerKind;
 };
 export type ApprovalDecision = 'allow' | 'allow_task' | 'deny';
@@ -247,6 +252,7 @@ export type WorkbenchSnapshot = {
   memoryEnabled: boolean;
   webSearch: WebSearchView;
   documents: DocumentView[];
+  plan: PlanItem[];
 };
 
 /** 桌面端偏好：主题与各级系统通知开关（只在主进程与渲染层之间使用，不交给 Host）。 */

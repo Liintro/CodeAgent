@@ -5,7 +5,7 @@ import { CONTINUE_TEXT, IMPLEMENT_PLAN_TEXT, VERIFY_ONLY_TEXT } from '../../shar
 import { repositoryProfile } from '../engineering/navigation.js';
 import { budgetReport } from '../kernel/budget.js';
 import { toLlm } from '../kernel/context.js';
-import { createAgent, type KernelAgent } from '../kernel/index.js';
+import { NativeAgent } from '../kernel/loop.js';
 import type { Slot } from '../memory/recall.js';
 import type { PermissionGate } from '../policy/permission-gate.js';
 import { classify } from '../tools/permission.js';
@@ -16,12 +16,12 @@ import type { AgentEvents } from './agent-events.js';
 import type { DeliveryService } from './delivery.js';
 import type { MemoryService } from './memory.js';
 import type { ModelService } from './model.js';
-import { buildRecoveryBrief, modeStatement } from './prompts.js';
+import { buildRecoveryBrief, modeStatement, noProgressStopText } from './prompts.js';
 import { RequestAssembly } from './request-context.js';
 import type { TaskService } from './task-service.js';
 import { buildTools } from './toolset.js';
 import { failureHash, feedbackMessage, runVerification } from './verification.js';
-import { createError, userMessage, type RunEnd, type TaskState, type Workbench } from './workbench.js';
+import { createError, userMessage, type ActiveRun, type RunEnd, type TaskState, type Workbench } from './workbench.js';
 
 /** followUp：任务里已经有过 Run，这条是用户的后续消息（可能是在纠正上一个回答）。 */
 type RunOptions = { verifyOnly?: boolean; resumed?: boolean; followUp?: boolean };
@@ -44,7 +44,20 @@ export class RunController {
 
   startMessage(text: string): { runId: string } {
     this.wb.assertConfigured();
+    const active = this.wb.active;
+    if (active?.agent && active.taskId === this.wb.taskId && !active.cancelRequested) return this.enqueue(active, text);
     return this.beginRun(text, { followUp: true });
+  }
+
+  // 运行中发来的消息不打断当前请求：排队，下一次模型请求前插入（见 RequestAssembly）。
+  private enqueue(active: ActiveRun, text: string): { runId: string } {
+    const task = this.wb.taskOf(active)!;
+    const id = randomUUID();
+    active.queued.push({ id, text });
+    task.timeline.push({ kind: 'message', id, role: 'user', text, queued: true });
+    this.wb.ledger.appendEvent(active.id, 'steering.queued', { textPreview: text.slice(0, 200) });
+    this.wb.emitSnapshot();
+    return { runId: active.id };
   }
 
   async implementPlan(): Promise<{ runId: string }> {
@@ -92,7 +105,7 @@ export class RunController {
     task.error = undefined;
     task.interrupted = false;
     task.run = { id: run.id, taskId: task.id, phase: 'running', toolErrors: false };
-    this.wb.active = { id: run.id, kind: 'prompt', taskId: task.id, cancelRequested: false, verifyAbort: new AbortController() };
+    this.wb.active = { id: run.id, kind: 'prompt', taskId: task.id, cancelRequested: false, verifyAbort: new AbortController(), queued: [] };
     if (options.verifyOnly) {
       task.timeline.push({ kind: 'notice', id: randomUUID(), text: VERIFY_ONLY_TEXT });
     } else {
@@ -121,13 +134,13 @@ export class RunController {
         modelId: profile?.modelId, permission: task.permission, sandboxStatus: this.wb.sandboxStatus(),
         roots: task.roots.map(({ id, alias, path }) => ({ id, alias, path })),
         toolNames: tools.map(tool => tool.name), ruleSources: rules.sources, userTextPreview: text.slice(0, 200),
-        trigger: resumedFrom ? 'recovery' : 'user', ...(resumedFrom ? { resumedFrom } : {}), policyId: this.wb.policy.id, kernel: this.wb.kernel,
+        trigger: resumedFrom ? 'recovery' : 'user', ...(resumedFrom ? { resumedFrom } : {}), policyId: this.wb.policy.id,
       });
       const startTrees = mode !== 'plan' ? await deliveries.snapshotRoots(task, runId, 'run_start') : new Map<string, string>();
       const mutationsAtStart = new Map(task.mutations);
       if (options.followUp) await memory.captureCorrection(task, runId, text);
       const first = options.verifyOnly ? undefined : await this.firstPrompt(task, text, resumedFrom);
-      let agent: KernelAgent | undefined;
+      let agent: NativeAgent | undefined;
       const slots: Slot[] = [];
       if (first) {
         const anchor = first.at(-1) as Extract<AgentMessage, { role: 'user' }>;
@@ -136,7 +149,7 @@ export class RunController {
         const { parallelReadOnlyTools, maxParallelTools } = this.wb.policy.settings.kernel;
         const trusted = gate.trustedMcpNames();
         const assembly = new RequestAssembly(this.wb, task, runId, slots, model.streamFn(profile!));
-        agent = createAgent(this.wb.kernel, {
+        agent = new NativeAgent({
           scheduling: { parallel: parallelReadOnlyTools, maxParallel: maxParallelTools, isReadOnly: name => ['read', 'mcp_trusted'].includes(classify(name, trusted)) },
           initialState: {
             model: model.createModel(profile!),
@@ -164,8 +177,24 @@ ${modeStatement(task, this.wb.policy)}`,
       else await this.endRun(task, runId, 'failed', 'agent_error', createError('RUN_FAILED', '执行失败', error, this.wb.apiKey));
     } finally {
       unsubscribe?.();
+      const left = this.wb.active?.id === runId ? this.wb.active.queued : [];
       if (this.wb.active?.id === runId) this.wb.active = undefined;
+      this.sendLeftover(task, left);
     }
+  }
+
+  // 模型最后一次回复之后（例如验证期间）才排队的消息：正常结束时作为下一条消息发出，取消或失败时不再自动发送。
+  private sendLeftover(task: TaskState, left: { id: string; text: string }[]): void {
+    if (!left.length) return;
+    const ids = new Set(left.map(item => item.id));
+    task.timeline = task.timeline.filter(item => !(item.kind === 'message' && ids.has(item.id)));
+    const text = left.map(item => item.text).join('\n\n');
+    if (task.run?.phase === 'finished') {
+      this.beginRun(text, { followUp: true });
+      return;
+    }
+    task.timeline.push({ kind: 'notice', id: randomUUID(), text: `执行已结束，排队的消息未发送：${text.slice(0, 200)}` });
+    this.wb.emitSnapshot();
   }
 
   // 中断过的 Task 先核对真实状态，并把恢复说明作为单独的标注消息放在用户消息之前。
@@ -180,17 +209,19 @@ ${modeStatement(task, this.wb.policy)}`,
 
   // 提示 -> 验证 -> 修复；预算、无进展、取消、模型错误都会结束循环。
   private async drive(
-    task: TaskState, runId: string, agent: KernelAgent | undefined, first: AgentMessage[] | undefined, options: RunOptions,
+    task: TaskState, runId: string, agent: NativeAgent | undefined, first: AgentMessage[] | undefined, options: RunOptions,
     startTrees: Map<string, string>, mutationsAtStart: Map<string, number>, slots: Slot[],
   ): Promise<RunEnd> {
     const { deliveries, memory, model } = this.services;
     let input = first;
-    let previous: { hash: string; fingerprint: string } | undefined;
+    let previous: { hash: string; repeats: number } | undefined;
     for (let attempt = 0; ; attempt++) {
-      if (input) {
-        const ended = await model.promptWithRecovery(task, runId, agent!, input);
+      // 一轮回复结束后才排队的消息接着发给模型，然后再进入验证。
+      for (let next = input ?? []; next.length; next = this.wb.takeQueued(task).map(userMessage)) {
+        const ended = await model.promptWithRecovery(task, runId, agent!, next);
         if (ended) return ended;
       }
+      if (this.wb.active?.summarizing) return { phase: 'finished', stopReason: this.wb.active.summarizing };
       if (task.permission.userMode === 'plan') return { phase: 'finished', stopReason: 'passed' };
       const view = await deliveries.refreshDelivery(task);
       const startOf = (rootId: string, git: boolean, now?: string) => startTrees.get(rootId) ?? (git ? now : delivery.treeOfPlainRoot(mutationsAtStart.get(rootId) ?? 0));
@@ -210,10 +241,15 @@ ${modeStatement(task, this.wb.policy)}`,
       if (options.verifyOnly) return { phase: 'finished', stopReason: 'verification_failed' };
       if (attempt >= task.acceptance.maxRepairs) return { phase: 'finished', stopReason: 'budget_exhausted' };
 
-      const fingerprint = view.roots.map(root => `${root.rootId}:${root.finalTree}`).join('|');
       const hash = failureHash(failed);
-      if (previous?.hash === hash && previous.fingerprint === fingerprint) return { phase: 'finished', stopReason: 'no_progress' };
-      previous = { hash, fingerprint };
+      previous = { hash, repeats: previous?.hash === hash ? previous.repeats + 1 : 1 };
+      if (previous.repeats >= this.wb.policy.settings.repair.noProgressRepeats) {
+        this.wb.active!.summarizing = 'no_progress';
+        this.wb.ledger.appendEvent(runId, 'run.summarizing', { reason: 'no_progress', repeats: previous.repeats, commandId: failed.commandId });
+        const text = noProgressStopText(failed.label, previous.repeats);
+        this.wb.pushMessage(task, { text, harness: true });
+        return await model.promptWithRecovery(task, runId, agent!, [userMessage(text)]) ?? { phase: 'finished', stopReason: 'no_progress' };
+      }
 
       const alias = task.roots.find(root => root.id === failed.rootId)?.alias ?? failed.rootId;
       const feedback = feedbackMessage(failed, alias, attempt + 1, task.acceptance.maxRepairs);

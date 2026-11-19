@@ -3,13 +3,40 @@ import type { ApprovalDecision, ApprovalRequest, PermissionSetting, UserMode } f
 export type ToolClass = 'read' | 'edit' | 'shell' | 'mcp' | 'mcp_trusted';
 export type Verdict = 'allow' | 'ask' | 'block';
 
-const readTools = new Set(['read', 'grep', 'find', 'ls', 'git', 'doc_outline', 'doc_read', 'doc_view', 'code_outline', 'find_symbol', 'related_files', 'web_search', 'web_fetch', 'memory_search']);
+const readTools = new Set(['read', 'grep', 'find', 'ls', 'git', 'doc_outline', 'doc_read', 'doc_view', 'code_outline', 'find_symbol', 'related_files', 'web_search', 'web_fetch', 'memory_search', 'update_plan']);
 
 export function classify(name: string, trustedMcp: ReadonlySet<string>): ToolClass {
   if (readTools.has(name)) return 'read';
   if (name === 'edit' || name === 'write') return 'edit';
   if (name === 'powershell') return 'shell';
   return trustedMcp.has(name) ? 'mcp_trusted' : 'mcp';
+}
+
+// 含有这些字符的命令可能串联或嵌入别的命令，只能按整条命令授权。
+const SHELL_META = /[;&|<>`$(){}\r\n]/;
+const PREFIX_WORD = /^[A-Za-z][\w:-]*$/;
+
+/**
+ * 任务级授权：命令开头至多 words 个普通单词组成前缀（如 npm run build），之后同前缀的命令都放行。
+ * 只有一个单词时（python、node 后面跟脚本）前缀等于放行任意代码，所以至少两个单词，否则按整条命令。
+ */
+export function shellGrant(rootId: string, command: string, words: number): { key: string; label: string } {
+  const prefix = SHELL_META.test(command) ? [] : takeWhile(command.trim().split(/\s+/), word => PREFIX_WORD.test(word)).slice(0, words);
+  if (prefix.length < 2) return { key: `shell:${rootId}:${command}`, label: command };
+  return { key: `shell-prefix:${rootId}:${prefix.join(' ')}`, label: `${prefix.join(' ')} …` };
+}
+
+export function shellGranted(grants: readonly string[], rootId: string, command: string): boolean {
+  if (grants.includes(`shell:${rootId}:${command}`)) return true;
+  if (SHELL_META.test(command)) return false;
+  const text = command.trim().split(/\s+/).join(' ');
+  const mark = `shell-prefix:${rootId}:`;
+  return grants.some(grant => grant.startsWith(mark) && (text === grant.slice(mark.length) || text.startsWith(`${grant.slice(mark.length)} `)));
+}
+
+function takeWhile<T>(items: T[], test: (item: T) => boolean): T[] {
+  const index = items.findIndex(item => !test(item));
+  return index < 0 ? items : items.slice(0, index);
 }
 
 export function permissionFor(userMode: UserMode, grants: string[] = []): PermissionSetting {

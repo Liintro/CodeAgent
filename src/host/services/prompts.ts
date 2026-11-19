@@ -1,4 +1,5 @@
 import { stat } from 'node:fs/promises';
+import { STOP_PREFIX } from '../../shared/constants.js';
 import type { VerificationResult } from '../../shared/contracts/index.js';
 import type { HarnessPolicy } from '../runtime/policy.js';
 import { recoveryBrief, unknownCalls, type RootRecovery } from '../runtime/recovery.js';
@@ -50,4 +51,12 @@ export async function buildRecoveryBrief(wb: Workbench, deliveries: DeliveryServ
   const last = wb.ledger.taskEvents(task.id, 'verification.finished').at(-1)?.data as unknown as VerificationResult | undefined;
   const lastText = last ? `${task.roots.find(root => root.id === last.rootId)?.alias ?? last.rootId} ${last.label}：${last.status === 'passed' ? '通过' : `未通过（退出码 ${last.exitCode ?? '无'}）`}` : undefined;
   return recoveryBrief(roots, calls, lastText);
+}
+
+export function noProgressStopText(label: string, repeats: number): string {
+  return `${STOP_PREFIX} 验收命令「${label}」连续 ${repeats} 次出现同一失败，自动修复到此停止。请直接用文字总结：尝试过哪些修改、对失败原因的判断、建议的下一步。不要再修改文件或运行命令。`;
+}
+
+export function budgetStopText(exceeded: string[]): string {
+  return `${STOP_PREFIX} 本次执行已超出预算（${exceeded.join('、')}），到此停止修改。请直接用文字总结：已完成什么、还剩什么、建议的下一步。不要再调用工具。`;
 }

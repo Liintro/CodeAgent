@@ -25,7 +25,7 @@ export function Composer() {
 
   async function send() {
     const text = input.trim();
-    if (!text || active) return;
+    if (!text) return;
     const reply = await bridge().startMessage(text);
     if (reply.ok) {
       setInput('');
@@ -50,14 +50,14 @@ export function Composer() {
               void send();
             }
           }}
-          placeholder="描述任务或提问，Enter 发送，Shift+Enter 换行"
+          placeholder={active ? '补充或纠正，下一步前交给模型' : '描述任务或提问，Enter 发送，Shift+Enter 换行'}
           disabled={!ready}
           className="block w-full resize-none bg-transparent px-3.5 pb-1 pt-3 text-[13.5px] leading-relaxed placeholder:text-subtle focus:outline-none disabled:opacity-60"
         />
         <div className="flex items-center gap-2 px-2.5 pb-2.5">
           <ModeControl disabled={active || !ready} />
           <ModelSwitch disabled={active} />
-          <Button size="icon-sm" className="ml-auto rounded-lg" aria-label="发送" title="发送" onClick={send} disabled={!input.trim() || active || !ready}>
+          <Button size="icon-sm" className="ml-auto rounded-lg" aria-label="发送" title="发送" onClick={send} disabled={!input.trim() || !ready}>
             <ArrowUp />
           </Button>
         </div>

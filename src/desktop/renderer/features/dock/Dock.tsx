@@ -100,7 +100,7 @@ function ApprovalCard({ approval }: { approval: ApprovalRequest }) {
         <Input aria-label="拒绝原因" placeholder="拒绝原因（可选）" value={reason} onChange={event => setReason(event.target.value)}
           onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); decide('deny'); } }} className="h-8 min-w-0 flex-1 text-xs" />
         <Button variant="outline" size="sm" disabled={busy} onClick={() => decide('deny')}>拒绝 <Kbd aria-hidden="true">Esc</Kbd></Button>
-        {approval.grantKey && <Button variant="outline" size="sm" disabled={busy} onClick={() => decide('allow_task')}>允许本任务 <Kbd aria-hidden="true">Ctrl ⏎</Kbd></Button>}
+        {approval.grantKey && <Button variant="outline" size="sm" disabled={busy} title={approval.grantLabel} onClick={() => decide('allow_task')}>允许本任务<span data-testid="grant-label" className="max-w-48 truncate font-mono text-[11px] text-muted-foreground">{approval.grantLabel}</span> <Kbd aria-hidden="true">Ctrl ⏎</Kbd></Button>}
         <Button size="sm" disabled={busy} onClick={() => decide('allow')}>允许本次 <Kbd aria-hidden="true">⏎</Kbd></Button>
       </div>
     </section>

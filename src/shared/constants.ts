@@ -7,3 +7,4 @@ export const CONTINUE_TEXT = '请从当前的实际状态继续完成上一次�
 export const VERIFY_ONLY_TEXT = '手动验证';
 export const FEEDBACK_PREFIX = '[自动验证反馈]';
 export const RECOVERY_PREFIX = '[任务恢复说明]';
+export const STOP_PREFIX = '[停止说明]';

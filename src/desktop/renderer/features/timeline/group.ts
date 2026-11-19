@@ -14,6 +14,8 @@ export const isExplore = (item: TimelineItem): boolean => item.kind === 'tool' &
 export function groupTimeline(items: TimelineItem[]): TimelineEntry[] {
   const entries: TimelineEntry[] = [];
   for (const item of items) {
+    // 计划固定显示在输入框上方，时间线里不再重复。
+    if (item.kind === 'tool' && item.name === 'update_plan') continue;
     const last = entries.at(-1);
     if (item.kind === 'tool' && isExplore(item)) {
       if (last?.type === 'explore') last.tools.push(item);

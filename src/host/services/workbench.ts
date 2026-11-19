@@ -12,6 +12,7 @@ import type {
   ModelInput,
   ModelProfile,
   PermissionSetting,
+  PlanItem,
   RootView,
   RunnerKind,
   RunPhase,
@@ -26,7 +27,7 @@ import type {
   WorkbenchSnapshot,
 } from '../../shared/contracts/index.js';
 import { DocumentLibrary, type DocumentRecord } from '../documents/index.js';
-import { kernelFromEnv, type KernelAgent, type KernelName } from '../kernel/index.js';
+import type { NativeAgent } from '../kernel/loop.js';
 import { MemoryStore } from '../memory/store.js';
 import type { SessionStore } from '../kernel/session.js';
 import { Ledger } from '../runtime/ledger.js';
@@ -54,6 +55,8 @@ export type TaskState = {
   loaded: boolean;
   session: SessionStore;
   timeline: TimelineItem[];
+  /** update_plan 的最新结果；载入任务时从会话恢复。 */
+  plan: PlanItem[];
   run?: RunView;
   error?: AppError;
   changes?: ChangesView;
@@ -64,9 +67,13 @@ export type ActiveRun = {
   id: string;
   kind: 'prompt' | 'test';
   taskId?: string;
-  agent?: KernelAgent;
+  agent?: NativeAgent;
   verifyAbort: AbortController;
   cancelRequested: boolean;
+  /** 运行中用户发来的消息（时间线条目 id 与原文），在下一次模型请求前插入对话。 */
+  queued: { id: string; text: string }[];
+  /** 已停止修改、只等模型给出文字总结：无进展或超出预算。此后的工具调用一律拦截。 */
+  summarizing?: 'no_progress' | 'budget_exceeded';
   /** 下一次模型请求前无条件压缩一次（length 停止后的恢复）。 */
   forceCompaction?: boolean;
   done?: Promise<unknown>;
@@ -91,8 +98,6 @@ export class Workbench {
   webSearch?: WebSearchRuntimeConfig;
   /** Harness 策略包（经验手册 + 白名单参数）；默认策略不改变任何行为。 */
   policy: HarnessPolicy = initialPolicy();
-  /** 使用哪一种循环；启动时由 CODEAGENT_KERNEL 决定。 */
-  readonly kernel: KernelName = kernelFromEnv();
   readonly ledger: Ledger;
   readonly memory: MemoryStore;
   readonly broker = new ApprovalBroker();
@@ -170,6 +175,16 @@ export class Workbench {
     task.timeline.push(item);
     this.emit({ type: 'message.started', id: item.id, role: 'user' });
     this.emit({ type: 'message.ended', id: item.id, text: message.text });
+  }
+
+  /** 取出排队的消息：时间线上不再显示“已排队”，原文交给调用方写进对话。 */
+  takeQueued(task: TaskState): string[] {
+    const queued = this.active?.taskId === task.id ? this.active.queued.splice(0) : [];
+    if (!queued.length) return [];
+    const ids = new Set(queued.map(item => item.id));
+    task.timeline = task.timeline.map(item => item.kind === 'message' && ids.has(item.id) ? { ...item, queued: undefined } : item);
+    this.emitSnapshot();
+    return queued.map(item => item.text);
   }
 
   setPhase(task: TaskState, phase: RunPhase, attempt?: number): void {
@@ -251,6 +266,7 @@ export class Workbench {
         hasApiKey: Boolean(this.webSearch.apiKey),
       } : { enabled: false, hasApiKey: false },
       documents: task?.documents.map(documentView) ?? [],
+      plan: task?.plan ?? [],
     });
   }
 }

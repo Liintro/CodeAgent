@@ -113,7 +113,7 @@ export class MemoryService {
 
   /** Run 结束：用过的记忆记下这次的结果，时间线的记忆行随之显示是否起了作用。无从判断的结果（取消、出错、未验证）不记。 */
   recordOutcome(task: TaskState, runId: string, stopReason: string): void {
-    const outcome: MemoryOutcome | undefined = stopReason === 'passed' ? 'passed' : ['verification_failed', 'budget_exhausted', 'no_progress'].includes(stopReason) ? 'failed' : undefined;
+    const outcome: MemoryOutcome | undefined = stopReason === 'passed' ? 'passed' : ['verification_failed', 'budget_exhausted', 'no_progress', 'budget_exceeded'].includes(stopReason) ? 'failed' : undefined;
     if (!outcome) return;
     this.wb.memory.setOutcome(runId, outcome);
     for (const item of task.timeline) if (item.kind === 'memory' && item.runId === runId) item.outcome = outcome;

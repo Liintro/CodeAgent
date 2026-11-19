@@ -3,7 +3,7 @@ import type { AgentMessage, StreamFn } from '@earendil-works/pi-agent-core';
 import { streamSimple } from '@earendil-works/pi-ai/api/openai-completions';
 import type { Model } from '@earendil-works/pi-ai';
 import type { ModelInput } from '../../shared/contracts/index.js';
-import { createAgent, type KernelAgent } from '../kernel/index.js';
+import { NativeAgent } from '../kernel/loop.js';
 import { createError, type RunEnd, type TaskState, type Workbench } from './workbench.js';
 
 type PromptEnd = RunEnd & { retry?: 'transient' | 'length' };
@@ -22,7 +22,7 @@ export class ModelService {
     const id = randomUUID();
     this.wb.error = undefined;
     this.wb.testRun = { id, taskId: '', phase: 'running', toolErrors: false };
-    this.wb.active = { id, kind: 'test', cancelRequested: false, verifyAbort: new AbortController() };
+    this.wb.active = { id, kind: 'test', cancelRequested: false, verifyAbort: new AbortController(), queued: [] };
     this.wb.emit({ type: 'run.changed', value: this.wb.testRun });
     const done = this.runModelTest(id);
     this.wb.active.done = done;
@@ -31,7 +31,7 @@ export class ModelService {
 
   private async runModelTest(id: string): Promise<{ text: string }> {
     const profile = this.wb.profile!;
-    const agent = createAgent(this.wb.kernel, {
+    const agent = new NativeAgent({
       initialState: { model: this.createModel(profile), systemPrompt: '请简短使用中文回答。', tools: [] },
       scheduling: { parallel: false, maxParallel: 1, isReadOnly: () => false },
       streamFn: (model, context, options) => streamSimple(model as Model<'openai-completions'>, context, {
@@ -106,7 +106,7 @@ export class ModelService {
 
   // 只重发失败的那一次模型请求：失败的 assistant 消息从 Agent 状态与会话中移除，然后从原有记录继续，
   // 已完成的工具调用不会重放；取消随时生效，重试用尽后返回原来的错误。
-  async promptWithRecovery(task: TaskState, runId: string, agent: KernelAgent, input: AgentMessage[]): Promise<RunEnd | undefined> {
+  async promptWithRecovery(task: TaskState, runId: string, agent: NativeAgent, input: AgentMessage[]): Promise<RunEnd | undefined> {
     let ended = await this.promptOnce(agent, () => agent.prompt(input));
     const used = { transient: 0, length: 0 };
     while (ended?.retry) {
@@ -130,7 +130,7 @@ export class ModelService {
     return ended;
   }
 
-  private dropFailedAssistant(task: TaskState, agent: KernelAgent): void {
+  private dropFailedAssistant(task: TaskState, agent: NativeAgent): void {
     const last = agent.state.messages.at(-1);
     if (last?.role === 'assistant') agent.state.messages = agent.state.messages.slice(0, -1);
     task.session.dropLastAssistant();
@@ -147,7 +147,7 @@ export class ModelService {
     return !this.wb.active?.cancelRequested;
   }
 
-  private async promptOnce(agent: KernelAgent, start: () => Promise<void>): Promise<PromptEnd | undefined> {
+  private async promptOnce(agent: NativeAgent, start: () => Promise<void>): Promise<PromptEnd | undefined> {
     const prompting = start();
     if (this.wb.active?.cancelRequested) agent.abort();
     await prompting;

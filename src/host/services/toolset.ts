@@ -3,6 +3,7 @@ import { createNavigationTools } from '../engineering/navigation.js';
 import { createMemoryTool, type MemorySearchParams } from '../tools/memory-tool.js';
 import { createRootTools } from '../tools/native-tools.js';
 import { classify, registered } from '../tools/permission.js';
+import { createPlanTool } from '../tools/plan-tool.js';
 import { createWebTools } from '../tools/web.js';
 import type { AgentEvents } from './agent-events.js';
 import type { TaskState, Workbench } from './workbench.js';
@@ -23,9 +24,14 @@ export function buildTools(wb: Workbench, task: TaskState, events: AgentEvents, 
   }) : [];
   // web 工具不依赖工作目录，没有目录时也保持可用。
   const webTools = wb.webSearch ? createWebTools(wb.webSearch, { onStarted: toolCallId => events.markToolRunning(task, toolCallId) }) : [];
-  if (!task.roots.length) return [...documentTools, ...webTools];
+  const planTool = createPlanTool(items => {
+    task.plan = items;
+    wb.emitSnapshot();
+  });
+  if (!task.roots.length) return [planTool, ...documentTools, ...webTools];
   const mcpTools = wb.mcp.tools().filter(tool => registered(mode, classify(tool.name, trustedMcp)));
   return [
+    planTool,
     ...createRootTools({
       roots: task.roots,
       fullAccess: mode === 'bypass',

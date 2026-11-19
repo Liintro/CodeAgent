@@ -11,7 +11,7 @@ export const initialEnvelope: SnapshotEnvelope = {
   value: {
     host: 'starting', models: [], tasks: [], roots: [], timeline: [], mcp: [], sandboxStatus: 'untested', acceptance: { commands: [], maxRepairs: 3 },
     permission: { userMode: 'manual', phase: 'act', approval: 'ask_writes_and_commands', scope: 'selected_roots', grants: [] }, memoryEnabled: true,
-    webSearch: { enabled: false, hasApiKey: false }, documents: [],
+    webSearch: { enabled: false, hasApiKey: false }, documents: [], plan: [],
   },
 };
 

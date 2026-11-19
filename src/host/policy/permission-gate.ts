@@ -4,7 +4,7 @@ import type { ApprovalDecision, ApprovalRequest, RunnerKind } from '../../shared
 import type { MemoryService } from '../services/memory.js';
 import type { TaskService } from '../services/task-service.js';
 import type { TaskState, Workbench } from '../services/workbench.js';
-import { classify, verdict } from '../tools/permission.js';
+import { classify, shellGrant, shellGranted, verdict } from '../tools/permission.js';
 
 const APPROVAL_ARGS_LIMIT = 8 * 1024;
 
@@ -41,11 +41,18 @@ export class PermissionGate {
     const sandboxReady = this.wb.sandboxReady(task);
     const runner: RunnerKind | undefined = cls === 'shell' ? (mode !== 'bypass' && sandboxReady ? 'sandbox' : 'direct') : undefined;
     if (runner) this.wb.runners.set(toolCallId, runner);
-    const grantKey = cls === 'shell' && root ? `shell:${root.id}:${String(args.command)}` : binding ? `mcp:${binding.server}.${binding.tool}` : undefined;
+    const command = String(args.command);
+    const shell = cls === 'shell' && root ? shellGrant(root.id, command, this.wb.policy.settings.permission.grantPrefixWords) : undefined;
+    const grantKey = shell?.key ?? (binding ? `mcp:${binding.server}.${binding.tool}` : undefined);
     const record = (decision: string, by: 'policy' | 'user') =>
       this.wb.ledger.appendEvent(runId, 'permission.decided', { toolCallId, decision, by, userMode: mode, runnerKind: runner });
 
     if (!this.wb.active || this.wb.active.id !== runId) return { block: true, reason: '当前执行已结束' };
+    if (this.wb.active.summarizing) {
+      record('deny', 'policy');
+      this.wb.updateTool(task, toolCallId, { state: 'denied' });
+      return { block: true, reason: '已停止修改，不能再调用工具；请直接用文字总结。' };
+    }
     const outcome = verdict(mode, cls, sandboxReady);
     if (outcome === 'allow') {
       record('allow', 'policy');
@@ -56,7 +63,8 @@ export class PermissionGate {
       this.wb.updateTool(task, toolCallId, { state: 'denied' });
       return { block: true, reason: 'Auto 模式只在已验证的沙箱内自动执行命令，当前沙箱不可用或目录未授权，命令未执行。' };
     }
-    if (grantKey && task.permission.grants.includes(grantKey)) {
+    const granted = cls === 'shell' && root ? shellGranted(task.permission.grants, root.id, command) : Boolean(grantKey && task.permission.grants.includes(grantKey));
+    if (granted) {
       record('allow_task', 'policy');
       return undefined;
     }
@@ -67,12 +75,13 @@ export class PermissionGate {
       runId,
       toolCallId,
       tool: name,
-      summary: cls === 'shell' ? String(args.command) : binding ? `${binding.server}.${binding.tool}` : String(args.path ?? name),
+      summary: cls === 'shell' ? command : binding ? `${binding.server}.${binding.tool}` : String(args.path ?? name),
       rootId: root?.id,
       rootAlias: root?.alias,
       cwd: root?.path,
       argsText: argsText.slice(0, APPROVAL_ARGS_LIMIT),
       grantKey: cls === 'edit' ? undefined : grantKey,
+      grantLabel: cls === 'edit' ? undefined : shell?.label ?? (binding ? `${binding.server}.${binding.tool}` : undefined),
       runner,
     };
     task.run = { ...task.run!, phase: 'awaiting_approval' };
