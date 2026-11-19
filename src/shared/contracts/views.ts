@@ -9,7 +9,7 @@ export type ExecutionScope = 'selected_roots' | 'host_full_access';
 export type SandboxStatus = 'untested' | 'available' | 'unavailable' | 'failed';
 export type RunnerKind = 'sandbox' | 'direct';
 
-// grants 只保存精确动作：shell:<rootId>:<命令> 或 mcp:<server>.<tool>，不存在“全部命令”授权。
+// grants：shell:<rootId>:<整条命令>、shell-prefix:<rootId>:<命令前缀> 或 mcp:<server>.<tool>；不存在“全部命令”授权。
 export type PermissionSetting = {
   userMode: UserMode;
   phase: WorkPhase;
@@ -132,6 +132,8 @@ export type ApprovalRequest = {
   cwd?: string;
   argsText: string;
   grantKey?: string;
+  /** 选择“允许本任务”时授权的范围，例如 npm test …。 */
+  grantLabel?: string;
   runner?: RunnerKind;
 };
 export type ApprovalDecision = 'allow' | 'allow_task' | 'deny';

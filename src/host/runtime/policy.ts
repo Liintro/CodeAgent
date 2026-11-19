@@ -77,6 +77,10 @@ const paramsSchema = z.strictObject({
     parallelReadOnlyTools: z.boolean().optional(),
     maxParallelTools: int(1, 16),
   }).optional(),
+  permission: z.strictObject({
+    /** “允许本任务”授权的命令前缀最多取几个单词（npm run build 为 3）。 */
+    grantPrefixWords: int(1, 5),
+  }).optional(),
   budget: z.strictObject({
     /** 每个 Run 的 token、工具调用次数与墙钟时间上限：超出后停止修改，转为不调用工具的文字总结。 */
     maxTokens: int(10_000, 100_000_000),
@@ -112,6 +116,7 @@ export const DEFAULT_SETTINGS = {
   },
   output: { navigationChars: 16 * 1024, navigationFiles: 4000, documentChars: 24 * 1024, verificationTailLines: 200, verificationTailChars: 16 * 1024 },
   kernel: { parallelReadOnlyTools: true, maxParallelTools: 4 },
+  permission: { grantPrefixWords: 3 },
   budget: { maxTokens: 5_000_000, maxToolCalls: 1000, maxWallSeconds: 7200 },
 };
 
@@ -157,6 +162,7 @@ function resolve(params: PolicyParams): PolicySettings {
     recall: { ...d.recall, ...params.recall, weights: { ...d.recall.weights, ...params.recall?.weights } },
     output: { ...d.output, ...params.output },
     kernel: { ...d.kernel, ...params.kernel },
+    permission: { ...d.permission, ...params.permission },
     budget: { ...d.budget, ...params.budget },
   };
 }
