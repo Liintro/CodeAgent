@@ -16,7 +16,7 @@ import type { AgentEvents } from './agent-events.js';
 import type { DeliveryService } from './delivery.js';
 import type { MemoryService } from './memory.js';
 import type { ModelService } from './model.js';
-import { buildRecoveryBrief, modeStatement } from './prompts.js';
+import { buildRecoveryBrief, modeStatement, noProgressStopText } from './prompts.js';
 import { RequestAssembly } from './request-context.js';
 import type { TaskService } from './task-service.js';
 import { buildTools } from './toolset.js';
@@ -214,13 +214,14 @@ ${modeStatement(task, this.wb.policy)}`,
   ): Promise<RunEnd> {
     const { deliveries, memory, model } = this.services;
     let input = first;
-    let previous: { hash: string; fingerprint: string } | undefined;
+    let previous: { hash: string; repeats: number } | undefined;
     for (let attempt = 0; ; attempt++) {
       // 一轮回复结束后才排队的消息接着发给模型，然后再进入验证。
       for (let next = input ?? []; next.length; next = this.wb.takeQueued(task).map(userMessage)) {
         const ended = await model.promptWithRecovery(task, runId, agent!, next);
         if (ended) return ended;
       }
+      if (this.wb.active?.summarizing) return { phase: 'finished', stopReason: this.wb.active.summarizing };
       if (task.permission.userMode === 'plan') return { phase: 'finished', stopReason: 'passed' };
       const view = await deliveries.refreshDelivery(task);
       const startOf = (rootId: string, git: boolean, now?: string) => startTrees.get(rootId) ?? (git ? now : delivery.treeOfPlainRoot(mutationsAtStart.get(rootId) ?? 0));
@@ -240,10 +241,15 @@ ${modeStatement(task, this.wb.policy)}`,
       if (options.verifyOnly) return { phase: 'finished', stopReason: 'verification_failed' };
       if (attempt >= task.acceptance.maxRepairs) return { phase: 'finished', stopReason: 'budget_exhausted' };
 
-      const fingerprint = view.roots.map(root => `${root.rootId}:${root.finalTree}`).join('|');
       const hash = failureHash(failed);
-      if (previous?.hash === hash && previous.fingerprint === fingerprint) return { phase: 'finished', stopReason: 'no_progress' };
-      previous = { hash, fingerprint };
+      previous = { hash, repeats: previous?.hash === hash ? previous.repeats + 1 : 1 };
+      if (previous.repeats >= this.wb.policy.settings.repair.noProgressRepeats) {
+        this.wb.active!.summarizing = 'no_progress';
+        this.wb.ledger.appendEvent(runId, 'run.summarizing', { reason: 'no_progress', repeats: previous.repeats, commandId: failed.commandId });
+        const text = noProgressStopText(failed.label, previous.repeats);
+        this.wb.pushMessage(task, { text, harness: true });
+        return await model.promptWithRecovery(task, runId, agent!, [userMessage(text)]) ?? { phase: 'finished', stopReason: 'no_progress' };
+      }
 
       const alias = task.roots.find(root => root.id === failed.rootId)?.alias ?? failed.rootId;
       const feedback = feedbackMessage(failed, alias, attempt + 1, task.acceptance.maxRepairs);

@@ -17,6 +17,8 @@ const paramsSchema = z.strictObject({
   repair: z.strictObject({
     /** 新任务的自动修复轮数上限（用户可在验收设置里修改）。 */
     defaultMaxRepairs: int(0, 10),
+    /** 同一失败（失败 hash 相同，不论代码是否改变）连续出现这么多次就停止修复，转为文字总结。 */
+    noProgressRepeats: int(2, 10),
   }).optional(),
   compaction: z.strictObject({
     /** 为模型输出预留的窗口比例与上限；不少于一次完整输出加安全余量。 */
@@ -76,7 +78,7 @@ const paramsSchema = z.strictObject({
     maxParallelTools: int(1, 16),
   }).optional(),
   budget: z.strictObject({
-    /** 每个 Run 的 token、工具调用次数与墙钟时间阈值：超出只记录，不终止。 */
+    /** 每个 Run 的 token、工具调用次数与墙钟时间上限：超出后停止修改，转为不调用工具的文字总结。 */
     maxTokens: int(10_000, 100_000_000),
     maxToolCalls: int(10, 100_000),
     maxWallSeconds: int(60, 86_400),
@@ -87,7 +89,7 @@ export type PolicyParams = z.infer<typeof paramsSchema>;
 
 export const DEFAULT_SETTINGS = {
   shellMaxTimeoutSec: undefined as number | undefined,
-  repair: { defaultMaxRepairs: DEFAULT_MAX_REPAIRS },
+  repair: { defaultMaxRepairs: DEFAULT_MAX_REPAIRS, noProgressRepeats: 3 },
   compaction: { reserveRatio: 0.25, reserveCapTokens: 16384, reserveMaxRatio: 0.5, keepRecentTokens: 20000, keepRecentRatio: 0.35, layers: true, keepToolResults: 8, summaryToolResultChars: 2000 },
   recall: {
     maxItems: 5,

@@ -3,7 +3,7 @@ import type { BudgetSettings } from '../runtime/policy.js';
 
 export type BudgetReport = { tokens: number; toolCalls: number; wallSeconds: number; limits: BudgetSettings; exceeded: (keyof BudgetSettings)[] };
 
-/** 一个 Run 用掉的 token（含压缩摘要）、工具调用次数与墙钟时间；只用于记录，超出阈值也不终止 Run。 */
+/** 一个 Run 用掉的 token（含压缩摘要）、工具调用次数与墙钟时间，以及超出了哪些上限。 */
 export function budgetReport(events: RunEvent[], now: number, limits: BudgetSettings): BudgetReport {
   const tokens = events.filter(event => event.type === 'model.usage').reduce((sum, event) => sum + (Number(event.data.totalTokens) || 0), 0);
   const toolCalls = events.filter(event => event.type === 'tool.finished').length;

@@ -13,9 +13,9 @@ import { Markdown } from './Markdown';
 
 export const MessageRow = memo(function MessageRow({ item, pending }: { item: Extract<TimelineItem, { kind: 'message' }>; pending: boolean }) {
   if (item.harness) {
-    const recovery = item.text.startsWith('[任务恢复说明]');
+    const title = item.text.startsWith('[任务恢复说明]') ? '任务恢复说明（系统生成）' : item.text.startsWith('[停止说明]') ? '停止说明（系统生成）' : '自动验证反馈（系统生成）';
     return (
-      <Collapsible testId="harness-note" icon={<Info />} title={recovery ? '任务恢复说明（系统生成）' : '自动验证反馈（系统生成）'}>
+      <Collapsible testId="harness-note" icon={<Info />} title={title}>
         <pre className="whitespace-pre-wrap text-xs text-muted-foreground">{item.text}</pre>
       </Collapsible>
     );

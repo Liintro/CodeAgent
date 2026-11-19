@@ -1,12 +1,15 @@
 import { randomUUID } from 'node:crypto';
 import type { AgentMessage, PrepareRequest, StreamFn } from '@earendil-works/pi-agent-core';
+import { budgetReport } from '../kernel/budget.js';
 import { compactIfNeeded, contextTokens, outputBudget, sessionContext, summaryFiles, type CompactionOutcome } from '../kernel/compaction.js';
 import { tokensOf } from '../kernel/tokens.js';
 import { injectSlots, reanchorSlots, type Slot } from '../memory/recall.js';
 import { NOTICE } from '../runtime/timeline.js';
+import { budgetStopText } from './prompts.js';
 import { stampFiles, tailState } from './tail.js';
 import { createError, userMessage, type TaskState, type Workbench } from './workbench.js';
 
+const BUDGET_NAMES = { maxTokens: 'token', maxToolCalls: '工具调用次数', maxWallSeconds: '运行时间' } as const;
 const NO_USAGE = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
 
 /**
@@ -50,6 +53,7 @@ export class RequestAssembly {
       task.session.appendMessage(userMessage(text));
       wb.ledger.appendEvent(runId, 'steering.inserted', { textPreview: text.slice(0, 200) });
     }
+    this.enforceBudget();
     await this.refreshTail();
     const force = wb.active?.id === runId && wb.active.forceCompaction === true;
     if (force) wb.active!.forceCompaction = false;
@@ -74,6 +78,20 @@ export class RequestAssembly {
     this.used = contextTokens(task.session.entries(), this.fixedTokens(leading));
     return { context: { ...request.context, messages: [...leading, ...messages] } };
   };
+
+  // 超出预算后不再继续工作：插入一条停止说明，此后的工具调用由权限闸门拦截，模型只能给出文字总结。
+  private enforceBudget(): void {
+    const { wb, task, runId } = this;
+    const active = wb.active;
+    if (active?.id !== runId || active.summarizing) return;
+    const report = budgetReport(wb.ledger.events(runId), Date.now(), wb.policy.settings.budget);
+    if (!report.exceeded.length) return;
+    active.summarizing = 'budget_exceeded';
+    const text = budgetStopText(report.exceeded.map(key => BUDGET_NAMES[key]));
+    task.session.appendMessage(userMessage(text));
+    wb.pushMessage(task, { text, harness: true });
+    wb.ledger.appendEvent(runId, 'run.summarizing', { reason: 'budget_exceeded', ...report });
+  }
 
   // system 消息除正文外还带 sections 与工具定义，按整条消息的 JSON 计数。
   private fixedTokens(leading: AgentMessage[]): number {

@@ -5,7 +5,7 @@ export type RunEventType =
   | 'tool.finished' | 'model.usage' | 'run.ended'
   | 'verification.started' | 'verification.finished' | 'repair.requested' | 'compaction.done' | 'compaction.failed' | 'delivery.changed'
   | 'memory.recalled' | 'memory.captured' | 'memory.capture_failed' | 'memory.changed' | 'model.retry' | 'budget.updated'
-  | 'steering.queued' | 'steering.inserted';
+  | 'steering.queued' | 'steering.inserted' | 'run.summarizing';
 export type RunEvent = { runId: string; seq: number; at: number; type: RunEventType; data: Record<string, unknown> };
 
 export type SnapshotEnvelope = { hostInstanceId: string; seq: number; value: WorkbenchSnapshot };

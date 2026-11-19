@@ -72,6 +72,8 @@ export type ActiveRun = {
   cancelRequested: boolean;
   /** 运行中用户发来的消息（时间线条目 id 与原文），在下一次模型请求前插入对话。 */
   queued: { id: string; text: string }[];
+  /** 已停止修改、只等模型给出文字总结：无进展或超出预算。此后的工具调用一律拦截。 */
+  summarizing?: 'no_progress' | 'budget_exceeded';
   /** 下一次模型请求前无条件压缩一次（length 停止后的恢复）。 */
   forceCompaction?: boolean;
   done?: Promise<unknown>;

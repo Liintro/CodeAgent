@@ -46,6 +46,11 @@ export class PermissionGate {
       this.wb.ledger.appendEvent(runId, 'permission.decided', { toolCallId, decision, by, userMode: mode, runnerKind: runner });
 
     if (!this.wb.active || this.wb.active.id !== runId) return { block: true, reason: '当前执行已结束' };
+    if (this.wb.active.summarizing) {
+      record('deny', 'policy');
+      this.wb.updateTool(task, toolCallId, { state: 'denied' });
+      return { block: true, reason: '已停止修改，不能再调用工具；请直接用文字总结。' };
+    }
     const outcome = verdict(mode, cls, sandboxReady);
     if (outcome === 'allow') {
       record('allow', 'policy');
