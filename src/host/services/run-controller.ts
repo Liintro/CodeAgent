@@ -5,7 +5,7 @@ import { CONTINUE_TEXT, IMPLEMENT_PLAN_TEXT, VERIFY_ONLY_TEXT } from '../../shar
 import { repositoryProfile } from '../engineering/navigation.js';
 import { budgetReport } from '../kernel/budget.js';
 import { toLlm } from '../kernel/context.js';
-import { createAgent, type KernelAgent } from '../kernel/index.js';
+import { NativeAgent } from '../kernel/loop.js';
 import type { Slot } from '../memory/recall.js';
 import type { PermissionGate } from '../policy/permission-gate.js';
 import { classify } from '../tools/permission.js';
@@ -134,13 +134,13 @@ export class RunController {
         modelId: profile?.modelId, permission: task.permission, sandboxStatus: this.wb.sandboxStatus(),
         roots: task.roots.map(({ id, alias, path }) => ({ id, alias, path })),
         toolNames: tools.map(tool => tool.name), ruleSources: rules.sources, userTextPreview: text.slice(0, 200),
-        trigger: resumedFrom ? 'recovery' : 'user', ...(resumedFrom ? { resumedFrom } : {}), policyId: this.wb.policy.id, kernel: this.wb.kernel,
+        trigger: resumedFrom ? 'recovery' : 'user', ...(resumedFrom ? { resumedFrom } : {}), policyId: this.wb.policy.id,
       });
       const startTrees = mode !== 'plan' ? await deliveries.snapshotRoots(task, runId, 'run_start') : new Map<string, string>();
       const mutationsAtStart = new Map(task.mutations);
       if (options.followUp) await memory.captureCorrection(task, runId, text);
       const first = options.verifyOnly ? undefined : await this.firstPrompt(task, text, resumedFrom);
-      let agent: KernelAgent | undefined;
+      let agent: NativeAgent | undefined;
       const slots: Slot[] = [];
       if (first) {
         const anchor = first.at(-1) as Extract<AgentMessage, { role: 'user' }>;
@@ -149,7 +149,7 @@ export class RunController {
         const { parallelReadOnlyTools, maxParallelTools } = this.wb.policy.settings.kernel;
         const trusted = gate.trustedMcpNames();
         const assembly = new RequestAssembly(this.wb, task, runId, slots, model.streamFn(profile!));
-        agent = createAgent(this.wb.kernel, {
+        agent = new NativeAgent({
           scheduling: { parallel: parallelReadOnlyTools, maxParallel: maxParallelTools, isReadOnly: name => ['read', 'mcp_trusted'].includes(classify(name, trusted)) },
           initialState: {
             model: model.createModel(profile!),
@@ -209,7 +209,7 @@ ${modeStatement(task, this.wb.policy)}`,
 
   // 提示 -> 验证 -> 修复；预算、无进展、取消、模型错误都会结束循环。
   private async drive(
-    task: TaskState, runId: string, agent: KernelAgent | undefined, first: AgentMessage[] | undefined, options: RunOptions,
+    task: TaskState, runId: string, agent: NativeAgent | undefined, first: AgentMessage[] | undefined, options: RunOptions,
     startTrees: Map<string, string>, mutationsAtStart: Map<string, number>, slots: Slot[],
   ): Promise<RunEnd> {
     const { deliveries, memory, model } = this.services;

@@ -26,8 +26,7 @@ const EMPTY_USAGE = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTok
 
 /**
  * 自研循环：请求模型 → 执行工具 → 交回结果 → 再请求，直到模型不再调用工具。
- * 对外接口与运行时用到的 Pi Agent 部分相同（prompt、continue、abort、waitForIdle、subscribe、state），
- * 事件顺序也相同，所以会话写入、时间线、重试与恢复逻辑两种内核共用。
+ * 事件类型与顺序沿用 Pi Agent 的约定（会话写入、时间线、重试与恢复都依赖它）。
  */
 export class NativeAgent {
   readonly state: { model: Model<any>; tools: AgentTool<any>[]; messages: AgentMessage[]; errorMessage?: string };
