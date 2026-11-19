@@ -46,7 +46,15 @@ const paramsSchema = z.strictObject({
     weights: z.strictObject({
       path: num(0, 10), failure: num(0, 10), identifier: num(0, 10), phrase: num(0, 10),
       confirmed: num(0, 10), recency: num(0, 10), rank: num(0, 10),
+      /** 用过该记忆的 Run 每通过一次加权、每失败或被还原一次降权。 */
+      success: num(0, 10), unsuccessful: num(0, 10),
     }).optional(),
+    /** 效果加减权的总量上限。 */
+    effectCap: num(0, 10),
+    /** “变更”记忆在路径没命中时的相关度系数。 */
+    changeWeight: num(0, 1),
+    /** memory_search 一次最多返回的条目数。 */
+    searchLimit: int(1, 30),
     minPhraseGrams: int(1, 20),
     phraseFull: int(1, 40),
     maxQueryTerms: int(1, 200),
@@ -90,7 +98,10 @@ export const DEFAULT_SETTINGS = {
     /** 已漂移的条目必须有足够强的相关性才注入。 */
     driftedMinRelevance: 2.0,
     driftedWeight: 0.5,
-    weights: { path: 2.0, failure: 1.5, identifier: 1.0, phrase: 1.5, confirmed: 0.5, recency: 0.1, rank: 0.3 },
+    weights: { path: 2.0, failure: 1.5, identifier: 1.0, phrase: 1.5, confirmed: 0.5, recency: 0.1, rank: 0.3, success: 0.3, unsuccessful: 0.5 },
+    effectCap: 1.0,
+    changeWeight: 0.7,
+    searchLimit: 8,
     /** 查询里至少有这么多个 3 字片段出现在条目中（即共享约 5 个连续汉字）才算短语命中；命中 phraseFull 个即满分。 */
     minPhraseGrams: 3,
     phraseFull: 6,

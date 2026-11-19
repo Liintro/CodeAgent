@@ -23,7 +23,8 @@ import { buildTools } from './toolset.js';
 import { failureHash, feedbackMessage, runVerification } from './verification.js';
 import { createError, userMessage, type RunEnd, type TaskState, type Workbench } from './workbench.js';
 
-type RunOptions = { verifyOnly?: boolean; resumed?: boolean };
+/** followUp：任务里已经有过 Run，这条是用户的后续消息（可能是在纠正上一个回答）。 */
+type RunOptions = { verifyOnly?: boolean; resumed?: boolean; followUp?: boolean };
 export type RunServices = {
   tasks: TaskService;
   deliveries: DeliveryService;
@@ -43,7 +44,7 @@ export class RunController {
 
   startMessage(text: string): { runId: string } {
     this.wb.assertConfigured();
-    return this.beginRun(text, {});
+    return this.beginRun(text, { followUp: true });
   }
 
   async implementPlan(): Promise<{ runId: string }> {
@@ -84,6 +85,7 @@ export class RunController {
     const task = this.services.tasks.ensureTask();
     this.services.tasks.load(task);
     const resumed = task.interrupted && !options.verifyOnly ? this.wb.ledger.lastRun(task.id) : undefined;
+    const followUp = options.followUp === true && !resumed && this.wb.ledger.lastRun(task.id) !== undefined && text !== IMPLEMENT_PLAN_TEXT;
     const run = this.wb.ledger.startRun(task.id, resumed ? 'recovery' : 'user', resumed?.id);
     this.wb.testRun = undefined;
     this.wb.error = undefined;
@@ -100,7 +102,7 @@ export class RunController {
     this.services.tasks.save(task);
     this.wb.emitRun(task);
     this.wb.emitSnapshot();
-    this.wb.active.done = this.runPrompt(task, run.id, text, { ...options, resumed: Boolean(resumed) }, resumed?.id);
+    this.wb.active.done = this.runPrompt(task, run.id, text, { ...options, resumed: Boolean(resumed), followUp }, resumed?.id);
     return { runId: run.id };
   }
 
@@ -114,7 +116,7 @@ export class RunController {
       const rules = await readWorkspaceRules(task.roots, this.rulesPath);
       await tasks.refreshRoots(task);
       task.profile = this.wb.navigationEnabled ? (await Promise.all(task.roots.map(root => repositoryProfile(root).catch(() => '')))).filter(Boolean).join('\n') : undefined;
-      const tools = buildTools(this.wb, task, events, gate.trustedMcpNames());
+      const tools = buildTools(this.wb, task, events, gate.trustedMcpNames(), await memory.searchAvailable(task) ? params => memory.searchForTool(task, runId, params) : undefined);
       this.wb.ledger.appendEvent(runId, 'run.started', {
         modelId: profile?.modelId, permission: task.permission, sandboxStatus: this.wb.sandboxStatus(),
         roots: task.roots.map(({ id, alias, path }) => ({ id, alias, path })),
@@ -123,6 +125,7 @@ export class RunController {
       });
       const startTrees = mode !== 'plan' ? await deliveries.snapshotRoots(task, runId, 'run_start') : new Map<string, string>();
       const mutationsAtStart = new Map(task.mutations);
+      if (options.followUp) await memory.captureCorrection(task, runId, text);
       const first = options.verifyOnly ? undefined : await this.firstPrompt(task, text, resumedFrom);
       let agent: KernelAgent | undefined;
       const slots: Slot[] = [];
@@ -236,6 +239,7 @@ ${modeStatement(task, this.wb.policy)}`,
       if (view) await memory.captureMemory(task, runId, view);
     }
     this.wb.ledger.appendEvent(runId, 'budget.updated', { ...budgetReport(this.wb.ledger.events(runId), Date.now(), this.wb.policy.settings.budget) });
+    memory.recordOutcome(task, runId, stopReason);
     this.wb.ledger.appendEvent(runId, 'run.ended', { phase, stopReason, error });
     this.wb.ledger.endRun(runId, phase, stopReason, this.wb.profile?.modelId);
     task.run = { ...task.run!, phase };

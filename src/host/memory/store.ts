@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
-import type { MemoryKind } from '../../shared/contracts/index.js';
+import type { MemoryKind, MemoryOutcome } from '../../shared/contracts/index.js';
 
 export type Anchor = { path: string; preBlob?: string; postBlob?: string };
 
@@ -31,7 +31,9 @@ export type MemoryRow = Omit<NewMemory, 'anchors' | 'evidence'> & {
 };
 
 export type Candidate = MemoryRow & { rank: number };
-export type Use = { runId: string; itemId: string; point: 'start' | 'repair'; validity: string; score: number; injected: boolean };
+export type Use = { runId: string; itemId: string; point: 'start' | 'repair' | 'search'; validity: string; score: number; injected: boolean };
+/** 一条记忆被交给模型之后，那些 Run 的结果分别有几次。 */
+export type Effect = { passed: number; failed: number; rejected: number };
 
 export const TEXT_LIMIT = 600;
 
@@ -82,6 +84,11 @@ export class MemoryStore {
     return row && toRow(row);
   }
 
+  hasActive(repoIds: string[]): boolean {
+    if (!repoIds.length) return false;
+    return this.db.prepare(`SELECT 1 FROM memory_item WHERE status = 'active' AND repo_id IN (${placeholders(repoIds)}) LIMIT 1`).get(...repoIds) !== undefined;
+  }
+
   list(repoIds: string[]): MemoryRow[] {
     if (!repoIds.length) return [];
     return (this.db.prepare(`SELECT * FROM memory_item WHERE status <> 'deleted' AND repo_id IN (${placeholders(repoIds)}) ORDER BY updated_at DESC`)
@@ -116,6 +123,10 @@ export class MemoryStore {
     });
   }
 
+  confirm(id: string): void {
+    this.db.prepare("UPDATE memory_item SET confirmed = 1, updated_at = ? WHERE id = ? AND status <> 'deleted'").run(Date.now(), id);
+  }
+
   setStatus(id: string, status: 'active' | 'rejected'): void {
     this.db.prepare("UPDATE memory_item SET status = ?, updated_at = ? WHERE id = ? AND status <> 'deleted'").run(status, Date.now(), id);
   }
@@ -137,6 +148,38 @@ export class MemoryStore {
   recordUse(uses: Use[]): void {
     const insert = this.db.prepare('INSERT OR REPLACE INTO memory_use (run_id, item_id, point, validity, score, injected) VALUES (?, ?, ?, ?, ?, ?)');
     for (const use of uses) insert.run(use.runId, use.itemId, use.point, use.validity, use.score, use.injected ? 1 : 0);
+  }
+
+  /** Run 结束时记下它的结果：只关联真正交给模型的那些记忆。 */
+  setOutcome(runId: string, outcome: MemoryOutcome): void {
+    this.db.prepare('UPDATE memory_use SET outcome = ? WHERE run_id = ? AND injected = 1').run(outcome, runId);
+  }
+
+  /** 用户还原了一个 Task 在某仓库的改动：这个 Task 里用过的记忆，结果都改记为被拒绝。 */
+  rejectTaskOutcomes(taskId: string): void {
+    this.db.prepare("UPDATE memory_use SET outcome = 'rejected' WHERE injected = 1 AND outcome IS NOT NULL AND run_id IN (SELECT id FROM run WHERE task_id = ?)").run(taskId);
+  }
+
+  /** 每条记忆在其他 Run 里的效果；同一 Run 里多次交给模型只算一次。 */
+  effects(itemIds: string[], excludeRunId?: string): Map<string, Effect> {
+    const result = new Map<string, Effect>();
+    if (!itemIds.length) return result;
+    const rows = this.db.prepare(`SELECT item_id, outcome, COUNT(DISTINCT run_id) AS n FROM memory_use
+      WHERE injected = 1 AND outcome IS NOT NULL AND run_id IS NOT ? AND item_id IN (${placeholders(itemIds)}) GROUP BY item_id, outcome`)
+      .all(excludeRunId ?? null, ...itemIds) as { item_id: string; outcome: MemoryOutcome; n: number }[];
+    for (const row of rows) {
+      const effect = result.get(row.item_id) ?? { passed: 0, failed: 0, rejected: 0 };
+      effect[row.outcome] = row.n;
+      result.set(row.item_id, effect);
+    }
+    return result;
+  }
+
+  /** 这些 Run 各自的结果（时间线的记忆行用）。 */
+  runOutcomes(runIds: string[]): Map<string, MemoryOutcome> {
+    if (!runIds.length) return new Map();
+    return new Map((this.db.prepare(`SELECT DISTINCT run_id, outcome FROM memory_use WHERE injected = 1 AND outcome IS NOT NULL AND run_id IN (${placeholders(runIds)})`)
+      .all(...runIds) as { run_id: string; outcome: MemoryOutcome }[]).map(row => [row.run_id, row.outcome]));
   }
 
   private writeAnchors(id: string, anchors: Anchor[]): void {

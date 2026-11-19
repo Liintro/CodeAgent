@@ -1,13 +1,14 @@
 import { createDocumentTools } from '../documents/index.js';
 import { createNavigationTools } from '../engineering/navigation.js';
+import { createMemoryTool, type MemorySearchParams } from '../tools/memory-tool.js';
 import { createRootTools } from '../tools/native-tools.js';
 import { classify, registered } from '../tools/permission.js';
 import { createWebTools } from '../tools/web.js';
 import type { AgentEvents } from './agent-events.js';
 import type { TaskState, Workbench } from './workbench.js';
 
-/** 按权限模式和任务内容组装本次 Run 可用的工具。 */
-export function buildTools(wb: Workbench, task: TaskState, events: AgentEvents, trustedMcp: ReadonlySet<string>) {
+/** 按权限模式和任务内容组装本次 Run 可用的工具；memorySearch 只在记忆开启时给出。 */
+export function buildTools(wb: Workbench, task: TaskState, events: AgentEvents, trustedMcp: ReadonlySet<string>, memorySearch?: (params: MemorySearchParams) => Promise<string>) {
   const mode = task.permission.userMode;
   const documentTools = task.documents.length ? createDocumentTools({
     documents: () => task.documents,
@@ -38,6 +39,7 @@ export function buildTools(wb: Workbench, task: TaskState, events: AgentEvents, 
     }),
     ...documentTools,
     ...webTools,
+    ...(memorySearch ? [createMemoryTool(memorySearch, toolCallId => events.markToolRunning(task, toolCallId))] : []),
     ...(wb.navigationEnabled ? createNavigationTools({
       roots: task.roots,
       outputChars: wb.policy.settings.output.navigationChars,
