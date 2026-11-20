@@ -32,12 +32,12 @@ export type SubagentOptions = {
 export type SubagentResult = { sessionId: string; answer: string; toolCalls: number; cited: number; invalid: string[] };
 
 /**
- * 在独立上下文里跑一个子智能体：会话存入 session_entry（会话 id 记下父 Run），过程写入父 Run 的 run_event，
+ * 在独立上下文里跑一个子智能体：会话以自己的 session 存入父任务的 session_entry（会话 id 记下父 Run），过程写入父 Run 的 run_event，
  * 工具调用次数受预算约束；结论里指向不存在的行的 path:line 引用被剔除，只保留路径。
  */
 export async function runSubagent(wb: Workbench, task: TaskState, runId: string, options: SubagentOptions): Promise<SubagentResult> {
   const sessionId = `subagent:${runId}:${options.key}`;
-  const session = new SessionStore(wb.ledger.database, sessionId);
+  const session = new SessionStore(wb.ledger.database, task.id, sessionId);
   const steps: SubagentStep[] = [];
   let calls = 0;
   wb.ledger.appendEvent(runId, 'subagent.started', { sessionId, kind: options.kind, key: options.key, title: options.title });

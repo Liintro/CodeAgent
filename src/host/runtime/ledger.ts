@@ -92,6 +92,13 @@ const MIGRATIONS = [`
     PRIMARY KEY (task_id, seq));
 `, `
   ALTER TABLE memory_use ADD COLUMN outcome TEXT;
+`, `
+  CREATE TABLE session_entry_v6 (
+    task_id TEXT NOT NULL REFERENCES task(id), session TEXT NOT NULL DEFAULT '', seq INTEGER NOT NULL, type TEXT NOT NULL, at INTEGER NOT NULL,
+    data_json TEXT NOT NULL, PRIMARY KEY (task_id, session, seq));
+  INSERT INTO session_entry_v6 (task_id, seq, type, at, data_json) SELECT task_id, seq, type, at, data_json FROM session_entry;
+  DROP TABLE session_entry;
+  ALTER TABLE session_entry_v6 RENAME TO session_entry;
 `];
 
 // 只记录事实（发生了什么）；对话内容在 session_entry 表里，由 kernel/session.ts 读写。
