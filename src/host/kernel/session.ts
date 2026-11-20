@@ -15,12 +15,12 @@ export type SessionEntry =
 
 type NewEntry = SessionEntry extends infer E ? E extends SessionEntry ? Omit<E, 'seq' | 'at'> : never : never;
 
-/** 一个任务的对话记录，存在账本数据库的 session_entry 表里；读入一次后在内存里追加。 */
+/** 一个任务的对话记录，存在账本数据库的 session_entry 表里；读入一次后在内存里追加。主会话的 session 为空，子智能体各有自己的 session。 */
 export class SessionStore {
   private readonly list: SessionEntry[];
 
-  constructor(private readonly db: DatabaseSync, readonly taskId: string) {
-    this.list = (db.prepare('SELECT seq, type, at, data_json FROM session_entry WHERE task_id = ? ORDER BY seq').all(taskId) as Record<string, any>[])
+  constructor(private readonly db: DatabaseSync, readonly taskId: string, readonly session = '') {
+    this.list = (db.prepare('SELECT seq, type, at, data_json FROM session_entry WHERE task_id = ? AND session = ? ORDER BY seq').all(taskId, session) as Record<string, any>[])
       .map(row => ({ seq: row.seq, at: row.at, type: row.type, ...JSON.parse(row.data_json) }));
   }
 
@@ -44,14 +44,14 @@ export class SessionStore {
   dropLastAssistant(): void {
     const last = this.list.at(-1);
     if (last?.type !== 'message' || last.message.role !== 'assistant') return;
-    this.db.prepare('DELETE FROM session_entry WHERE task_id = ? AND seq = ?').run(this.taskId, last.seq);
+    this.db.prepare('DELETE FROM session_entry WHERE task_id = ? AND session = ? AND seq = ?').run(this.taskId, this.session, last.seq);
     this.list.pop();
   }
 
   private append(entry: NewEntry): void {
     const { type, ...data } = entry;
     const value = { ...entry, seq: (this.list.at(-1)?.seq ?? 0) + 1, at: Date.now() } as SessionEntry;
-    this.db.prepare('INSERT INTO session_entry (task_id, seq, type, at, data_json) VALUES (?, ?, ?, ?, ?)').run(this.taskId, value.seq, type, value.at, JSON.stringify(data));
+    this.db.prepare('INSERT INTO session_entry (task_id, session, seq, type, at, data_json) VALUES (?, ?, ?, ?, ?, ?)').run(this.taskId, this.session, value.seq, type, value.at, JSON.stringify(data));
     this.list.push(value);
   }
 }
