@@ -126,7 +126,7 @@ export const DEFAULT_SETTINGS = {
   },
   output: { navigationChars: 16 * 1024, navigationFiles: 4000, documentChars: 24 * 1024, verificationTailLines: 200, verificationTailChars: 16 * 1024 },
   kernel: { parallelReadOnlyTools: true, maxParallelTools: 4 },
-  subagents: { explorer: true, explorerToolCalls: 12, explorerOutputTokens: 2000, verifier: true, verifierToolCalls: 8, verifierOutputTokens: 2000 },
+  subagents: { explorer: false, explorerToolCalls: 12, explorerOutputTokens: 2000, verifier: true, verifierToolCalls: 8, verifierOutputTokens: 2000 },
   permission: { grantPrefixWords: 3 },
   budget: { maxTokens: 5_000_000, maxToolCalls: 1000, maxWallSeconds: 7200 },
 };
